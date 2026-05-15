@@ -3,7 +3,9 @@ import hashlib
 import os
 import re
 import secrets
+import time
 import traceback
+import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode
@@ -33,6 +35,32 @@ def _fmt_deadline(raw: str) -> str:
         return datetime.strptime(raw, "%Y-%m-%d").strftime("%d.%m.%Y")
     except ValueError:
         return raw
+
+
+# Cache de reportes generados, por id corto. TTL para que no crezca para siempre.
+_REPORT_CACHE: dict[str, dict] = {}
+_REPORT_TTL_SEC = 30 * 60
+_REPORT_MAX_ENTRIES = 30
+
+
+def _cache_report(context: dict) -> str:
+    now = time.time()
+    expired = [k for k, v in _REPORT_CACHE.items() if now - v["ts"] > _REPORT_TTL_SEC]
+    for k in expired:
+        _REPORT_CACHE.pop(k, None)
+    if len(_REPORT_CACHE) >= _REPORT_MAX_ENTRIES:
+        oldest = min(_REPORT_CACHE.items(), key=lambda kv: kv[1]["ts"])[0]
+        _REPORT_CACHE.pop(oldest, None)
+    rid = secrets.token_urlsafe(8)
+    _REPORT_CACHE[rid] = {"ts": now, "context": context}
+    return rid
+
+
+def _slug_filename(text: str) -> str:
+    """Para usar en Content-Disposition: 'Update Comercial - Mayo 2026' -> 'update-comercial-mayo-2026'."""
+    s = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    s = re.sub(r"[^a-zA-Z0-9]+", "-", s).strip("-").lower()
+    return s or "reporte"
 from connectors.instance import (
     MCPQueryError,
     fetch_ventas_por_cliente,
@@ -337,7 +365,66 @@ async def generar(request: Request):
         fecha_corte=fecha_corte_d,
         kam_name=kam_name,
     )
-    return templates.TemplateResponse("reporte.html", {"request": request, **context})
+    report_id = _cache_report(context)
+    return templates.TemplateResponse(
+        "reporte.html",
+        {"request": request, "report_id": report_id, "print_mode": False, **context},
+    )
+
+
+def _render_report_html(request: Request, context: dict, print_mode: bool) -> str:
+    return templates.get_template("reporte.html").render(
+        request=request,
+        report_id=None,
+        print_mode=print_mode,
+        **context,
+    )
+
+
+@app.get("/reporte/{report_id}.html")
+def download_report_html(request: Request, report_id: str):
+    entry = _REPORT_CACHE.get(report_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Reporte no encontrado o expiro (TTL 30 min). Regenera desde el formulario.")
+    context = entry["context"]
+    html = _render_report_html(request, context, print_mode=True)
+    fname = f"{_slug_filename('Update Comercial ' + context.get('mes_label', ''))}.html"
+    return Response(
+        content=html,
+        media_type="text/html; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@app.get("/reporte/{report_id}.pdf")
+async def download_report_pdf(request: Request, report_id: str):
+    entry = _REPORT_CACHE.get(report_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Reporte no encontrado o expiro (TTL 30 min). Regenera desde el formulario.")
+    context = entry["context"]
+    html = _render_report_html(request, context, print_mode=True)
+
+    from playwright.async_api import async_playwright
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(html, wait_until="networkidle")
+            pdf_bytes = await page.pdf(
+                format="A4",
+                landscape=True,
+                print_background=True,
+                margin={"top": "8mm", "right": "8mm", "bottom": "8mm", "left": "8mm"},
+            )
+        finally:
+            await browser.close()
+
+    fname = f"{_slug_filename('Update Comercial ' + context.get('mes_label', ''))}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 @app.get("/demo", response_class=HTMLResponse)
@@ -358,15 +445,10 @@ def demo(request: Request):
         fecha_corte=fc,
         proxima_revision="11.03.2026",
     )
-    return templates.TemplateResponse("reporte.html", {"request": request, **context})
-
-
-@app.get("/reporte.pdf")
-def reporte_pdf():
-    return Response(
-        content="PDF aun no implementado.",
-        media_type="text/plain",
-        status_code=501,
+    report_id = _cache_report(context)
+    return templates.TemplateResponse(
+        "reporte.html",
+        {"request": request, "report_id": report_id, "print_mode": False, **context},
     )
 
 
