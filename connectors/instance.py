@@ -1,16 +1,21 @@
 """
 Cliente al MCP de Instance (https://backendia.instancelatam.com/sse).
 
-Tablas BI consultadas (requieren rol con acceso a tablas BI en el MCP):
-  - panel_comercial:        mtod, ventas_lm, ventas_mom, ventas_mom_lastyear, last_mtod, fecha_lectura
-  - consenso_cliente_mes:   plan_mensual, ppto, estado (filtrado por mes en curso + APROBADO)
+Lee ventas reales desde `orders` agregando por cliente:
+  - mtod              = SUM(precio_sin_shipping) del mes en curso hasta fecha_corte (inclusive)
+  - mes_anterior_mtd  = SUM(precio_sin_shipping) del mes anterior hasta el mismo dia
+  - canal             = canales activos en la ventana [mes anterior .. fecha_corte]
 
-Auth: Bearer con el access_token que la app obtiene via OAuth y guarda en la sesion firmada.
+El plan_mensual NO viene del MCP — se ingresa en el formulario.
+
+Las queries envuelven `orders` en un subquery para que el rewrite server-side
+(MYSQL_ORDERS_SCOPE_*) quede contenido adentro y no rompa WHERE/GROUP BY del afuera.
 """
 import json
 import logging
+from calendar import monthrange
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import AsyncIterator, Optional
 
@@ -43,10 +48,6 @@ async def mcp_session(access_token: str) -> AsyncIterator[ClientSession]:
         async with ClientSession(read_stream, write_stream) as session:
             await session.initialize()
             yield session
-
-
-def _escape_sql_str(s: str) -> str:
-    return s.replace("'", "''")
 
 
 def _dump_content(result) -> str:
@@ -83,7 +84,6 @@ def _parse_query_result(result) -> list[dict]:
 
 
 async def _run_query(session: ClientSession, sql: str) -> tuple[list[dict], str]:
-    """Llama al tool `query` del MCP. Devuelve (filas_parseadas, respuesta_cruda)."""
     _logger.info("SQL >>> %s", sql)
     try:
         result = await session.call_tool("query", {"sql": sql})
@@ -92,62 +92,65 @@ async def _run_query(session: ClientSession, sql: str) -> tuple[list[dict], str]
         raise MCPQueryError(f"call_tool('query') fallo: {e}", sql=sql) from e
     raw = _dump_content(result)
     is_err = bool(getattr(result, "isError", False))
-    _logger.info("isError=%s RAW <<< %s", is_err, raw)
+    _logger.info("isError=%s RAW <<< %s", is_err, raw[:500])
     if is_err:
         raise MCPQueryError("MCP devolvio isError=True", sql=sql, raw=raw)
     rows = _parse_query_result(result)
-    _logger.info("PARSED %d row(s): %s", len(rows), rows[:3] if rows else [])
+    _logger.info("PARSED %d row(s)", len(rows))
     return rows, raw
 
 
-async def fetch_ventas_resumen(
+def _prev_month_window(fecha_corte: date) -> tuple[date, date]:
+    """[prev_month_first, prev_month_end_exclusive] espejando el dia de fecha_corte."""
+    if fecha_corte.month == 1:
+        prev_year, prev_month = fecha_corte.year - 1, 12
+    else:
+        prev_year, prev_month = fecha_corte.year, fecha_corte.month - 1
+    prev_start = date(prev_year, prev_month, 1)
+    last_day = monthrange(prev_year, prev_month)[1]
+    end_day = min(fecha_corte.day, last_day)
+    return prev_start, date(prev_year, prev_month, end_day) + timedelta(days=1)
+
+
+async def list_clientes_in_scope(session: ClientSession) -> list[dict]:
+    """Devuelve [{cliente, pais}, ...] de todos los clientes accesibles en la sesion."""
+    sql = (
+        "SELECT cliente, pais FROM "
+        "(SELECT cliente, pais FROM orders) o "
+        "GROUP BY cliente, pais"
+    )
+    rows, _ = await _run_query(session, sql)
+    return [{"cliente": r.get("cliente"), "pais": r.get("pais")} for r in rows if r.get("cliente")]
+
+
+async def fetch_ventas_por_cliente(
     session: ClientSession,
-    cliente: str,
-    pais: str,
     fecha_corte: date,
-) -> dict:
+) -> tuple[dict[tuple[str, str], dict], str, str]:
     """
-    Devuelve para un cliente/pais:
-      - mtod (panel_comercial.mtod)
-      - mes_anterior_mtd (panel_comercial.ventas_lm)
-      - plan_mensual (consenso_cliente_mes.plan_mensual con estado=APROBADO del mes en curso)
-      - ventas_mom, ventas_mom_lastyear (panel_comercial, informativos)
-      - canal (vacio por ahora — pendiente decidir fuente)
-    Mas keys con prefijo "_" con SQLs y respuestas crudas para debug.
+    Devuelve dict {(cliente, pais): {mtod, mes_anterior_mtd, canal}} para TODOS los clientes
+    de la sesion. El llamador filtra por los que le interesan.
+    Tambien devuelve (sql, raw) para debug.
     """
-    mes_iso = fecha_corte.strftime("%Y-%m")
-    c = _escape_sql_str(cliente)
-    p = _escape_sql_str(pais)
+    cur_start = fecha_corte.replace(day=1)
+    cur_end = fecha_corte + timedelta(days=1)
+    prev_start, prev_end = _prev_month_window(fecha_corte)
 
-    sql_panel = (
-        "SELECT mtod, ventas_lm, ventas_mom, ventas_mom_lastyear, last_mtod, fecha_lectura "
-        "FROM panel_comercial "
-        f"WHERE cliente = '{c}' AND pais = '{p}' "
-        "ORDER BY fecha_lectura DESC LIMIT 1"
+    sql = (
+        "SELECT cliente, pais, "
+        f"ROUND(SUM(CASE WHEN fecha_creacion >= '{cur_start}' AND fecha_creacion < '{cur_end}' THEN precio_sin_shipping ELSE 0 END)) AS mtod, "
+        f"ROUND(SUM(CASE WHEN fecha_creacion >= '{prev_start}' AND fecha_creacion < '{prev_end}' THEN precio_sin_shipping ELSE 0 END)) AS mes_anterior_mtd, "
+        f"GROUP_CONCAT(DISTINCT CASE WHEN fecha_creacion >= '{prev_start}' AND fecha_creacion < '{cur_end}' THEN canal_de_venta END SEPARATOR ' + ') AS canal "
+        "FROM (SELECT cliente, pais, fecha_creacion, precio_sin_shipping, canal_de_venta FROM orders) o "
+        "GROUP BY cliente, pais"
     )
-    sql_consenso = (
-        "SELECT plan_mensual, ppto, estado "
-        "FROM consenso_cliente_mes "
-        f"WHERE cliente = '{c}' AND pais = '{p}' AND mes = '{mes_iso}' AND estado = 'APROBADO' "
-        "ORDER BY fecha_lectura DESC LIMIT 1"
-    )
-
-    panel_rows, panel_raw = await _run_query(session, sql_panel)
-    panel = panel_rows[0] if panel_rows else {}
-
-    consenso_rows, consenso_raw = await _run_query(session, sql_consenso)
-    consenso = consenso_rows[0] if consenso_rows else {}
-
-    return {
-        "mtod": float(panel.get("mtod") or 0),
-        "mes_anterior_mtd": float(panel.get("ventas_lm") or 0),
-        "plan_mensual": float(consenso.get("plan_mensual") or 0),
-        "ventas_mom": panel.get("ventas_mom"),
-        "ventas_mom_lastyear": panel.get("ventas_mom_lastyear"),
-        "canal": "",
-        "_panel_sql": sql_panel,
-        "_panel_raw": panel_raw,
-        "_consenso_sql": sql_consenso,
-        "_consenso_raw": consenso_raw,
-        "_empty": not panel_rows and not consenso_rows,
-    }
+    rows, raw = await _run_query(session, sql)
+    out: dict[tuple[str, str], dict] = {}
+    for r in rows:
+        key = (r.get("cliente") or "", r.get("pais") or "")
+        out[key] = {
+            "mtod": float(r.get("mtod") or 0),
+            "mes_anterior_mtd": float(r.get("mes_anterior_mtd") or 0),
+            "canal": (r.get("canal") or "").strip(" +") or "",
+        }
+    return out, sql, raw

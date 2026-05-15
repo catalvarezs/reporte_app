@@ -10,8 +10,8 @@
     .block { background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; padding: 10px 12px; margin: 8px 0; }
     pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-size: 12px; line-height: 1.5; }
     .label { font-weight: bold; color: #666; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
-    .empty-tag { display: inline-block; background: #fff8c5; color: #7d4e00; padding: 2px 6px; border-radius: 3px; font-size: 11px; margin-left: 8px; }
     .error-tag { display: inline-block; background: #ffd7d6; color: #82071e; padding: 2px 6px; border-radius: 3px; font-size: 11px; margin-left: 8px; }
+    .missing-tag { display: inline-block; background: #fff8c5; color: #7d4e00; padding: 2px 6px; border-radius: 3px; font-size: 11px; margin-left: 8px; }
     a { color: #1A2E4A; }
   </style>
 </head>
@@ -33,28 +33,25 @@
   {% endif %}
 
   {% for d in debug_info %}
-    <h2>
-      {{ d.cliente }}
-      {% if d.error %}<span class="error-tag">ERROR</span>{% elif d.empty %}<span class="empty-tag">0 filas</span>{% endif %}
-    </h2>
-    {% if d.error %}
-      <div class="block"><div class="label">Error</div><pre>{{ d.error }}</pre></div>
-    {% endif %}
-    {% if d.panel_sql %}
-      <div class="block"><div class="label">SQL panel_comercial</div><pre>{{ d.panel_sql }}</pre></div>
-    {% endif %}
-    {% if d.panel_raw %}
-      <div class="block"><div class="label">Respuesta panel_comercial</div><pre>{{ d.panel_raw }}</pre></div>
-    {% endif %}
-    {% if d.consenso_sql %}
-      <div class="block"><div class="label">SQL consenso_cliente_mes</div><pre>{{ d.consenso_sql }}</pre></div>
-    {% endif %}
-    {% if d.consenso_raw %}
-      <div class="block"><div class="label">Respuesta consenso_cliente_mes</div><pre>{{ d.consenso_raw }}</pre></div>
-    {% endif %}
-    {% if d.mtod is defined and d.mtod is not none %}
-      <div class="block"><div class="label">Parsed</div><pre>mtod            = {{ d.mtod }}
+    {% if d.sql or d.raw %}
+      <h2>Query MCP</h2>
+      {% if d.sql %}
+        <div class="block"><div class="label">SQL</div><pre>{{ d.sql }}</pre></div>
+      {% endif %}
+      {% if d.raw %}
+        <div class="block"><div class="label">Respuesta cruda</div><pre>{{ d.raw }}</pre></div>
+      {% endif %}
+      {% if d.error %}
+        <div class="block"><div class="label">Error</div><pre>{{ d.error }}</pre></div>
+      {% endif %}
+    {% elif d.cliente %}
+      <h2>
+        {{ d.cliente }}
+        {% if not d.encontrado %}<span class="missing-tag">sin filas en MCP</span>{% endif %}
+      </h2>
+      <div class="block"><div class="label">Datos usados</div><pre>mtod            = {{ d.mtod }}
 mes_anterior_mtd = {{ d.mes_anterior_mtd }}
+canal            = {{ d.canal }}
 plan_mensual    = {{ d.plan_mensual }}</pre></div>
     {% endif %}
   {% endfor %}
