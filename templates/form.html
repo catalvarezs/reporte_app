@@ -12,32 +12,45 @@
     input, select, textarea { padding: 10px 12px; border: 1px solid #d0d0d0; border-radius: 6px; font-size: 14px; font-family: inherit; }
     textarea { min-height: 80px; resize: vertical; }
     .hint { font-weight: 400; color: #888; font-size: 12px; }
-    button { padding: 12px; background: #1A2E4A; color: white; border: none; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; }
-    button:hover { background: #2E75B6; }
+    button, .btn { padding: 12px; background: #1A2E4A; color: white; border: none; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; text-decoration: none; text-align: center; display: inline-block; }
+    button:hover, .btn:hover { background: #2E75B6; }
+    .auth-block { margin-top: 32px; display: flex; flex-direction: column; gap: 16px; align-items: stretch; }
+    .session-bar { display: flex; justify-content: flex-end; margin-top: 24px; font-size: 13px; }
+    .session-bar a { color: #666; text-decoration: none; }
+    .session-bar a:hover { color: #1A2E4A; }
   </style>
 </head>
 <body>
   <h1>Update Comercial</h1>
   <p class="subtitle">Generar el reporte semanal a partir de los datos de Instance.</p>
-  <form action="/generar" method="post">
-    <label>Clientes
-      <span class="hint">Nombres separados por coma — ej: <em>Cliente A, Cliente B, Cliente C</em></span>
-      <textarea name="clientes" required placeholder="Cliente A, Cliente B"></textarea>
-    </label>
-    <label>País
-      <select name="pais">
-        <option value="Chile" selected>Chile</option>
-        <option value="Perú">Perú</option>
-        <option value="México">México</option>
-      </select>
-    </label>
-    <label>Mes
-      <input type="month" name="mes" required value="2026-05">
-    </label>
-    <label>Fecha de corte
-      <input type="date" name="fecha_corte" required value="2026-05-14">
-    </label>
-    <button type="submit">Generar reporte</button>
-  </form>
+
+  {% if authenticated %}
+    <form action="/generar" method="post">
+      <label>Clientes
+        <span class="hint">Nombres separados por coma — ej: <em>Cliente A, Cliente B, Cliente C</em></span>
+        <textarea name="clientes" required placeholder="Cliente A, Cliente B"></textarea>
+      </label>
+      <label>País
+        <select name="pais">
+          <option value="Chile" selected>Chile</option>
+          <option value="Perú">Perú</option>
+          <option value="México">México</option>
+        </select>
+      </label>
+      <label>Mes
+        <input type="month" name="mes" required value="2026-05">
+      </label>
+      <label>Fecha de corte
+        <input type="date" name="fecha_corte" required value="2026-05-14">
+      </label>
+      <button type="submit">Generar reporte</button>
+    </form>
+    <div class="session-bar"><a href="/logout">Cerrar sesion</a></div>
+  {% else %}
+    <div class="auth-block">
+      <p>Para generar reportes necesitas conectarte a la base de datos de Instance.</p>
+      <a class="btn" href="/login">Conectar a DB</a>
+    </div>
+  {% endif %}
 </body>
 </html>
