@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Debug — {{ title }}</title>
+  <style>
+    body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; max-width: 1100px; margin: 40px auto; padding: 0 20px; color: #1a1a1a; }
+    h1 { color: #b00020; font-size: 20px; border-bottom: 2px solid #b00020; padding-bottom: 8px; }
+    h2 { font-size: 14px; margin-top: 28px; color: #1A2E4A; }
+    .block { background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; padding: 10px 12px; margin: 8px 0; }
+    pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-size: 12px; line-height: 1.5; }
+    .label { font-weight: bold; color: #666; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+    .empty-tag { display: inline-block; background: #fff8c5; color: #7d4e00; padding: 2px 6px; border-radius: 3px; font-size: 11px; margin-left: 8px; }
+    .error-tag { display: inline-block; background: #ffd7d6; color: #82071e; padding: 2px 6px; border-radius: 3px; font-size: 11px; margin-left: 8px; }
+    a { color: #1A2E4A; }
+  </style>
+</head>
+<body>
+  <h1>{{ title }}</h1>
+
+  {% if error %}
+    <div class="block">
+      <div class="label">Error</div>
+      <pre>{{ error }}</pre>
+    </div>
+  {% endif %}
+
+  {% if trace %}
+    <div class="block">
+      <div class="label">Traceback</div>
+      <pre>{{ trace }}</pre>
+    </div>
+  {% endif %}
+
+  {% for d in debug_info %}
+    <h2>
+      {{ d.cliente }}
+      {% if d.error %}<span class="error-tag">ERROR</span>{% elif d.empty %}<span class="empty-tag">0 filas</span>{% endif %}
+    </h2>
+    {% if d.error %}
+      <div class="block"><div class="label">Error</div><pre>{{ d.error }}</pre></div>
+    {% endif %}
+    {% if d.panel_sql %}
+      <div class="block"><div class="label">SQL panel_comercial</div><pre>{{ d.panel_sql }}</pre></div>
+    {% endif %}
+    {% if d.panel_raw %}
+      <div class="block"><div class="label">Respuesta panel_comercial</div><pre>{{ d.panel_raw }}</pre></div>
+    {% endif %}
+    {% if d.consenso_sql %}
+      <div class="block"><div class="label">SQL consenso_cliente_mes</div><pre>{{ d.consenso_sql }}</pre></div>
+    {% endif %}
+    {% if d.consenso_raw %}
+      <div class="block"><div class="label">Respuesta consenso_cliente_mes</div><pre>{{ d.consenso_raw }}</pre></div>
+    {% endif %}
+    {% if d.mtod is defined and d.mtod is not none %}
+      <div class="block"><div class="label">Parsed</div><pre>mtod            = {{ d.mtod }}
+mes_anterior_mtd = {{ d.mes_anterior_mtd }}
+plan_mensual    = {{ d.plan_mensual }}</pre></div>
+    {% endif %}
+  {% endfor %}
+
+  <p style="margin-top: 32px;"><a href="/">← Volver al form</a></p>
+</body>
+</html>

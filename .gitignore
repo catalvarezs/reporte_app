@@ -6,3 +6,4 @@ venv/
 output/
 *.pdf
 .claude/settings.local.json
+debug.log

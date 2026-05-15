@@ -2,6 +2,7 @@ import base64
 import hashlib
 import os
 import secrets
+import traceback
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode
@@ -20,7 +21,7 @@ from calculations import (
     Insight,
     Accion,
 )
-from connectors.instance import fetch_ventas_resumen, mcp_session
+from connectors.instance import MCPQueryError, fetch_ventas_resumen, mcp_session
 
 load_dotenv()
 
@@ -58,26 +59,6 @@ _MESES_ES = {
 def _mes_label(mes_iso: str) -> str:
     y, m = mes_iso.split("-")
     return f"{_MESES_ES[int(m)]} {y}"
-
-
-def _parse_planes(planes_raw: str) -> dict[str, float]:
-    """Convierte 'Ballerina:38156746, Concha y Toro:12260479' en {cliente: monto}."""
-    out: dict[str, float] = {}
-    if not planes_raw:
-        return out
-    for entry in planes_raw.split(","):
-        entry = entry.strip()
-        if ":" not in entry:
-            continue
-        cliente, monto = entry.rsplit(":", 1)
-        cleaned = monto.strip().replace(".", "").replace(" ", "")
-        if not cleaned:
-            continue
-        try:
-            out[cliente.strip()] = float(cleaned)
-        except ValueError:
-            continue
-    return out
 
 
 def _pkce_pair() -> tuple[str, str]:
@@ -187,28 +168,82 @@ async def generar(
     pais: str = Form("Chile"),
     mes: str = Form(...),
     fecha_corte: str = Form(...),
-    planes: str = Form(""),
 ):
     if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
 
     fecha_corte_d = datetime.strptime(fecha_corte, "%Y-%m-%d").date()
     lista_clientes = [c.strip() for c in clientes.split(",") if c.strip()]
-    planes_map = _parse_planes(planes)
     access_token = request.session["oauth"]["access_token"]
+
+    rows: list[ClienteRow] = []
+    debug_info: list[dict] = []
 
     try:
         async with mcp_session(access_token) as mcp:
-            rows: list[ClienteRow] = []
             for cliente in lista_clientes:
-                rows.append(
-                    await _build_row(mcp, cliente, fecha_corte_d, pais, planes_map.get(cliente, 0.0))
-                )
+                try:
+                    row, resumen = await _build_row(mcp, cliente, fecha_corte_d, pais)
+                    rows.append(row)
+                    debug_info.append({
+                        "cliente": cliente,
+                        "panel_sql": resumen.get("_panel_sql"),
+                        "panel_raw": resumen.get("_panel_raw"),
+                        "consenso_sql": resumen.get("_consenso_sql"),
+                        "consenso_raw": resumen.get("_consenso_raw"),
+                        "empty": resumen.get("_empty", False),
+                        "mtod": resumen.get("mtod"),
+                        "mes_anterior_mtd": resumen.get("mes_anterior_mtd"),
+                        "plan_mensual": resumen.get("plan_mensual"),
+                        "error": None,
+                    })
+                except MCPQueryError as e:
+                    rows.append(_empty_row(cliente, fecha_corte_d))
+                    debug_info.append({
+                        "cliente": cliente,
+                        "panel_sql": e.sql,
+                        "panel_raw": e.raw,
+                        "empty": False,
+                        "error": str(e),
+                    })
     except httpx.HTTPStatusError as e:
         if e.response.status_code in (401, 403):
             request.session.clear()
             return RedirectResponse("/login", status_code=302)
-        raise
+        return templates.TemplateResponse("error.html", {
+            "request": request,
+            "title": f"HTTP {e.response.status_code} contra el MCP",
+            "error": str(e),
+            "trace": traceback.format_exc(),
+            "debug_info": [],
+        })
+    except Exception as e:
+        return templates.TemplateResponse("error.html", {
+            "request": request,
+            "title": "No se pudo conectar al MCP",
+            "error": str(e),
+            "trace": traceback.format_exc(),
+            "debug_info": [],
+        })
+
+    force_debug = os.getenv("DEBUG_MCP", "").strip() in ("1", "true", "yes")
+    all_failed_or_empty = all(d.get("error") or d.get("empty") for d in debug_info)
+    all_zero_data = debug_info and all(
+        (d.get("mtod") or 0) == 0 and (d.get("plan_mensual") or 0) == 0
+        for d in debug_info
+    )
+    if debug_info and (force_debug or all_failed_or_empty or all_zero_data):
+        title = "DEBUG_MCP=1 (forzado)" if force_debug else (
+            "Ningun cliente devolvio filas" if all_failed_or_empty else
+            "Las queries no devolvieron mtod ni plan_mensual"
+        )
+        return templates.TemplateResponse("error.html", {
+            "request": request,
+            "title": title,
+            "error": None,
+            "trace": None,
+            "debug_info": debug_info,
+        })
 
     context = build_report_context(
         rows=rows,
@@ -248,27 +283,24 @@ def reporte_pdf():
     )
 
 
-def _empty_row(cliente: str, fecha_corte: date, plan_mensual: float = 0.0) -> ClienteRow:
+def _empty_row(cliente: str, fecha_corte: date) -> ClienteRow:
     return calcular_cliente(
         cliente=cliente, fecha_corte=fecha_corte,
-        plan_mensual=plan_mensual, mtod=0, mes_anterior_mtd=0,
+        plan_mensual=0, mtod=0, mes_anterior_mtd=0,
     )
 
 
-async def _build_row(mcp, cliente: str, fecha_corte: date, pais: str, plan_mensual: float) -> ClienteRow:
-    try:
-        resumen = await fetch_ventas_resumen(mcp, cliente, pais, fecha_corte) or {}
-        return calcular_cliente(
-            cliente=cliente,
-            fecha_corte=fecha_corte,
-            plan_mensual=plan_mensual,
-            mtod=float(resumen.get("mtod") or 0),
-            mes_anterior_mtd=float(resumen.get("mes_anterior_mtd") or 0),
-            canal=resumen.get("canal") or "",
-        )
-    except Exception as e:
-        print(f"[warn] MCP query fallo para {cliente}: {e}")
-        return _empty_row(cliente, fecha_corte, plan_mensual)
+async def _build_row(mcp, cliente: str, fecha_corte: date, pais: str) -> tuple[ClienteRow, dict]:
+    resumen = await fetch_ventas_resumen(mcp, cliente, pais, fecha_corte)
+    row = calcular_cliente(
+        cliente=cliente,
+        fecha_corte=fecha_corte,
+        plan_mensual=float(resumen.get("plan_mensual") or 0),
+        mtod=float(resumen.get("mtod") or 0),
+        mes_anterior_mtd=float(resumen.get("mes_anterior_mtd") or 0),
+        canal=resumen.get("canal") or "",
+    )
+    return row, resumen
 
 
 if __name__ == "__main__":
