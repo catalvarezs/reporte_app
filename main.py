@@ -22,6 +22,17 @@ from calculations import (
     Insight,
     Accion,
 )
+
+
+def _fmt_deadline(raw: str) -> str:
+    """yyyy-mm-dd -> dd.mm.yyyy; pasa cualquier otro string tal cual."""
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d").strftime("%d.%m.%Y")
+    except ValueError:
+        return raw
 from connectors.instance import (
     MCPQueryError,
     fetch_ventas_por_cliente,
@@ -219,6 +230,7 @@ async def generar(request: Request):
     clientes_sel = [c for c in form.getlist("clientes_sel") if c.strip()]
     mes = form.get("mes", "")
     fecha_corte_raw = form.get("fecha_corte", "")
+    kam_name = (form.get("kam_name") or "").strip() or "Fernanda"
 
     if not clientes_sel or not mes or not fecha_corte_raw:
         return RedirectResponse("/", status_code=302)
@@ -227,6 +239,24 @@ async def generar(request: Request):
     planes: dict[str, float] = {}
     for cliente in clientes_sel:
         planes[cliente] = _parse_monto(form.get(f"plan_{_cliente_slug(cliente)}", ""))
+
+    acciones_por_cliente: dict[str, list[Accion]] = {c: [] for c in clientes_sel}
+    a_cli = form.getlist("accion_cliente")
+    a_act = form.getlist("accion_actividad")
+    a_det = form.getlist("accion_detalle")
+    a_dl = form.getlist("accion_deadline")
+    a_est = form.getlist("accion_estado")
+    for i in range(len(a_cli)):
+        cli = (a_cli[i] or "").strip()
+        actividad = (a_act[i] if i < len(a_act) else "").strip()
+        if not cli or not actividad or cli not in acciones_por_cliente:
+            continue
+        acciones_por_cliente[cli].append(Accion(
+            actividad=actividad,
+            detalle=(a_det[i] if i < len(a_det) else "").strip(),
+            deadline=_fmt_deadline(a_dl[i] if i < len(a_dl) else ""),
+            estado=(a_est[i] if i < len(a_est) else "En proceso").strip() or "En proceso",
+        ))
 
     access_token = request.session["oauth"]["access_token"]
     rows: list[ClienteRow] = []
@@ -279,6 +309,7 @@ async def generar(request: Request):
             mtod=float(resumen.get("mtod") or 0),
             mes_anterior_mtd=float(resumen.get("mes_anterior_mtd") or 0),
             canal=resumen.get("canal") or "",
+            acciones=acciones_por_cliente.get(cliente, []),
         )
         rows.append(row)
         debug_info.append({
@@ -304,6 +335,7 @@ async def generar(request: Request):
         rows=rows,
         mes_label=_mes_label(mes),
         fecha_corte=fecha_corte_d,
+        kam_name=kam_name,
     )
     return templates.TemplateResponse("reporte.html", {"request": request, **context})
 

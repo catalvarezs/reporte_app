@@ -123,6 +123,27 @@ async def list_clientes_in_scope(session: ClientSession) -> list[dict]:
     return [{"cliente": r.get("cliente"), "pais": r.get("pais")} for r in rows if r.get("cliente")]
 
 
+_CANALES_EXCLUIDOS = ("Vtex",)
+_ESTADOS_OC_EXCLUIDOS = ("cancelled", "canceled", "returned", "refunded", "partially_refunded")
+_ESTADOS_PAGO_EXCLUIDOS = ("refunded", "in_mediation")
+
+
+def _sql_filtro_ventas() -> str:
+    """Filtro SQL aplicado a todas las metricas de venta real.
+
+    Excluye: canal Vtex (B2B/mayorista), pedidos cancelados/devueltos/reembolsados,
+    y pagos en mediacion/reembolsados.
+    """
+    canales = ",".join(f"'{c}'" for c in _CANALES_EXCLUIDOS)
+    estados_oc = ",".join(f"'{e}'" for e in _ESTADOS_OC_EXCLUIDOS)
+    estados_pago = ",".join(f"'{e}'" for e in _ESTADOS_PAGO_EXCLUIDOS)
+    return (
+        f"canal_de_venta NOT IN ({canales}) "
+        f"AND estado_oc NOT IN ({estados_oc}) "
+        f"AND (estado_pago IS NULL OR estado_pago NOT IN ({estados_pago}))"
+    )
+
+
 async def fetch_ventas_por_cliente(
     session: ClientSession,
     fecha_corte: date,
@@ -135,13 +156,14 @@ async def fetch_ventas_por_cliente(
     cur_start = fecha_corte.replace(day=1)
     cur_end = fecha_corte + timedelta(days=1)
     prev_start, prev_end = _prev_month_window(fecha_corte)
+    flt = _sql_filtro_ventas()
 
     sql = (
         "SELECT cliente, pais, "
-        f"ROUND(SUM(CASE WHEN fecha_creacion >= '{cur_start}' AND fecha_creacion < '{cur_end}' THEN precio_sin_shipping ELSE 0 END)) AS mtod, "
-        f"ROUND(SUM(CASE WHEN fecha_creacion >= '{prev_start}' AND fecha_creacion < '{prev_end}' THEN precio_sin_shipping ELSE 0 END)) AS mes_anterior_mtd, "
-        f"GROUP_CONCAT(DISTINCT CASE WHEN fecha_creacion >= '{prev_start}' AND fecha_creacion < '{cur_end}' THEN canal_de_venta END SEPARATOR ' + ') AS canal "
-        "FROM (SELECT cliente, pais, fecha_creacion, precio_sin_shipping, canal_de_venta FROM orders) o "
+        f"ROUND(SUM(CASE WHEN fecha_creacion >= '{cur_start}' AND fecha_creacion < '{cur_end}' AND {flt} THEN precio_sin_shipping ELSE 0 END)) AS mtod, "
+        f"ROUND(SUM(CASE WHEN fecha_creacion >= '{prev_start}' AND fecha_creacion < '{prev_end}' AND {flt} THEN precio_sin_shipping ELSE 0 END)) AS mes_anterior_mtd, "
+        f"GROUP_CONCAT(DISTINCT CASE WHEN fecha_creacion >= '{prev_start}' AND fecha_creacion < '{cur_end}' AND {flt} THEN canal_de_venta END SEPARATOR ' + ') AS canal "
+        "FROM (SELECT cliente, pais, fecha_creacion, precio_sin_shipping, canal_de_venta, estado_oc, estado_pago FROM orders) o "
         "GROUP BY cliente, pais"
     )
     rows, raw = await _run_query(session, sql)
