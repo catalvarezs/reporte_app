@@ -20,6 +20,7 @@ from calculations import (
     Insight,
     Accion,
 )
+from connectors.instance import fetch_ventas_resumen, mcp_session
 
 load_dotenv()
 
@@ -57,6 +58,26 @@ _MESES_ES = {
 def _mes_label(mes_iso: str) -> str:
     y, m = mes_iso.split("-")
     return f"{_MESES_ES[int(m)]} {y}"
+
+
+def _parse_planes(planes_raw: str) -> dict[str, float]:
+    """Convierte 'Ballerina:38156746, Concha y Toro:12260479' en {cliente: monto}."""
+    out: dict[str, float] = {}
+    if not planes_raw:
+        return out
+    for entry in planes_raw.split(","):
+        entry = entry.strip()
+        if ":" not in entry:
+            continue
+        cliente, monto = entry.rsplit(":", 1)
+        cleaned = monto.strip().replace(".", "").replace(" ", "")
+        if not cleaned:
+            continue
+        try:
+            out[cliente.strip()] = float(cleaned)
+        except ValueError:
+            continue
+    return out
 
 
 def _pkce_pair() -> tuple[str, str]:
@@ -160,22 +181,34 @@ def logout(request: Request):
 
 
 @app.post("/generar", response_class=HTMLResponse)
-def generar(
+async def generar(
     request: Request,
     clientes: str = Form(...),
     pais: str = Form("Chile"),
     mes: str = Form(...),
     fecha_corte: str = Form(...),
+    planes: str = Form(""),
 ):
     if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
 
     fecha_corte_d = datetime.strptime(fecha_corte, "%Y-%m-%d").date()
     lista_clientes = [c.strip() for c in clientes.split(",") if c.strip()]
+    planes_map = _parse_planes(planes)
+    access_token = request.session["oauth"]["access_token"]
 
-    rows: list[ClienteRow] = [
-        _build_row(cliente, fecha_corte_d, pais) for cliente in lista_clientes
-    ]
+    try:
+        async with mcp_session(access_token) as mcp:
+            rows: list[ClienteRow] = []
+            for cliente in lista_clientes:
+                rows.append(
+                    await _build_row(mcp, cliente, fecha_corte_d, pais, planes_map.get(cliente, 0.0))
+                )
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code in (401, 403):
+            request.session.clear()
+            return RedirectResponse("/login", status_code=302)
+        raise
 
     context = build_report_context(
         rows=rows,
@@ -215,32 +248,27 @@ def reporte_pdf():
     )
 
 
-def _empty_row(cliente: str, fecha_corte: date) -> ClienteRow:
+def _empty_row(cliente: str, fecha_corte: date, plan_mensual: float = 0.0) -> ClienteRow:
     return calcular_cliente(
         cliente=cliente, fecha_corte=fecha_corte,
-        plan_mensual=0, mtod=0, mes_anterior_mtd=0,
+        plan_mensual=plan_mensual, mtod=0, mes_anterior_mtd=0,
     )
 
 
-def _build_row(cliente: str, fecha_corte: date, pais: str) -> ClienteRow:
-    if not os.getenv("INSTANCE_DB_URL"):
-        return _empty_row(cliente, fecha_corte)
-
+async def _build_row(mcp, cliente: str, fecha_corte: date, pais: str, plan_mensual: float) -> ClienteRow:
     try:
-        from connectors.instance import fetch_panel_comercial, fetch_consenso
-        mes_iso = fecha_corte.strftime("%Y-%m")
-        panel = fetch_panel_comercial(cliente, pais=pais) or {}
-        consenso = fetch_consenso(cliente, mes_iso, pais=pais) or {}
+        resumen = await fetch_ventas_resumen(mcp, cliente, pais, fecha_corte) or {}
         return calcular_cliente(
             cliente=cliente,
             fecha_corte=fecha_corte,
-            plan_mensual=float(consenso.get("plan_mensual") or 0),
-            mtod=float(panel.get("mtod") or 0),
-            mes_anterior_mtd=float(panel.get("ventas_lm") or 0),
+            plan_mensual=plan_mensual,
+            mtod=float(resumen.get("mtod") or 0),
+            mes_anterior_mtd=float(resumen.get("mes_anterior_mtd") or 0),
+            canal=resumen.get("canal") or "",
         )
     except Exception as e:
-        print(f"[warn] connector fallo para {cliente}: {e}")
-        return _empty_row(cliente, fecha_corte)
+        print(f"[warn] MCP query fallo para {cliente}: {e}")
+        return _empty_row(cliente, fecha_corte, plan_mensual)
 
 
 if __name__ == "__main__":

@@ -43,6 +43,10 @@
       <label>Fecha de corte
         <input type="date" name="fecha_corte" required value="2026-05-14">
       </label>
+      <label>Plan mensual por cliente
+        <span class="hint">Formato: <em>Cliente:monto, Cliente:monto</em> — montos en pesos sin separadores de miles. Ej: <em>Ballerina:38156746, Concha y Toro:12260479</em></span>
+        <textarea name="planes" placeholder="Ballerina:38156746, Concha y Toro:12260479"></textarea>
+      </label>
       <button type="submit">Generar reporte</button>
     </form>
     <div class="session-bar"><a href="/logout">Cerrar sesion</a></div>
