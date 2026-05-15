@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Update Comercial – {{ mes_label }} | Instance Latam</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --primary:   #0D1B2A;
+  --secondary: #00C2CB;
+  --accent:    #00B87A;
+  --alert:     #EF4444;
+  --warning:   #F59E0B;
+  --text:      #333;
+  --bg:        #F0F4F8;
+  --card:      #FFFFFF;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Lato', sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+.slide-container { flex: 1; display: flex; justify-content: center; align-items: center; padding: 20px 30px 10px; }
+.slide { background: var(--card); width: 100%; max-width: 1200px; height: 88vh; border-radius: 16px; box-shadow: 0 10px 40px rgba(13,27,42,.15); padding: 38px 44px; display: none; flex-direction: column; animation: fadeIn .45s ease; position: relative; overflow: hidden; }
+.slide.active { display: flex; }
+@keyframes fadeIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+.slide-header { margin-bottom: 20px; border-bottom: 2.5px solid var(--secondary); padding-bottom: 12px; }
+h1 { font-family: 'Poppins', sans-serif; color: var(--primary); font-size: 2rem; margin-bottom: 4px; }
+h2 { font-family: 'Poppins', sans-serif; color: #777; font-size: 1rem; font-weight: 400; }
+.cover { justify-content: center; align-items: flex-start; background: linear-gradient(135deg, #0A0F1A 0%, #0D1B2A 60%, #102035 100%); border-radius: 16px; overflow: hidden; }
+.cover::before { content: ''; position: absolute; top: 0; right: 0; width: 300px; height: 200px; background: var(--secondary); clip-path: polygon(100% 0, 0 0, 100% 100%); opacity: .18; }
+.cover::after { content: ''; position: absolute; bottom: 0; right: 0; width: 160px; height: 160px; background: var(--secondary); border-radius: 0 0 16px 0; opacity: .07; }
+.logo-pill { display: inline-block; background: rgba(0,194,203,.12); border: 1px solid var(--secondary); color: var(--secondary); font-family: 'Poppins', sans-serif; font-weight: 700; letter-spacing: 3px; font-size: 1rem; padding: 8px 24px; border-radius: 50px; margin-bottom: 36px; }
+.cover h1 { color: #fff; font-size: 3.4rem; line-height: 1.1; margin-bottom: 14px; }
+.cover h1 span { color: var(--secondary); }
+.cover .sub { font-size: 1.05rem; color: #7A92A8; margin-bottom: 44px; }
+.cover-meta { display: flex; gap: 36px; }
+.cover-meta-item { font-size: .88rem; color: #7A92A8; }
+.cover-meta-item strong { color: #fff; display: block; font-size: .95rem; }
+.cover-quote { position: absolute; bottom: 22px; left: 0; right: 0; text-align: center; font-size: .8rem; font-style: italic; color: rgba(255,255,255,.2); }
+.kpi-row { display: flex; gap: 20px; margin-bottom: 20px; }
+.kpi-card { flex: 1; background: #fff; border: 1px solid #e8edf2; border-radius: 10px; padding: 18px 20px; text-align: center; box-shadow: 0 3px 12px rgba(0,0,0,.05); transition: transform .2s, box-shadow .2s; }
+.kpi-card:hover { transform: translateY(-4px); box-shadow: 0 8px 24px rgba(0,0,0,.1); }
+.kpi-title { font-size: .78rem; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 7px; }
+.kpi-value { font-family: 'Poppins', sans-serif; font-size: 1.65rem; font-weight: 700; color: var(--primary); line-height: 1; }
+.kpi-sub { font-size: .78rem; color: #777; margin-top: 5px; }
+.pos { color: var(--accent); }
+.neg { color: var(--alert); }
+.warn-col { color: var(--warning); }
+.cyan-col { color: var(--secondary); }
+.tbl { width: 100%; border-collapse: collapse; font-size: .84rem; }
+.tbl th { background: var(--primary); color: #fff; padding: 10px 12px; text-align: left; font-size: .76rem; letter-spacing: .4px; position: sticky; top: 0; z-index: 5; }
+.tbl th.c { text-align: center; }
+.tbl td { padding: 9px 12px; border-bottom: 1px solid #edf2f7; color: #444; vertical-align: middle; }
+.tbl td.c { text-align: center; }
+.tbl tr:nth-child(even) td { background: #f7fafd; }
+.tbl tr:hover td { background: #edf6fb; }
+.tbl .total td { background: var(--primary) !important; color: #fff !important; font-weight: 700; }
+.tbl .total td.cy { color: var(--secondary) !important; }
+.tbl .total td.gr { color: #4ade80 !important; }
+.badge { display: inline-block; padding: 3px 9px; border-radius: 4px; font-size: .72rem; font-weight: 700; }
+.bg-green { background:#e8f5e9; color:#2e7d32; }
+.bg-red { background:#ffebee; color:#c62828; }
+.bg-yellow { background:#fffde7; color:#8a6200; }
+.bg-blue { background:#e3f2fd; color:#1565c0; }
+.bg-cyan { background:#e0f7fa; color:#006064; }
+.prog-track { background:#e5edf5; border-radius:6px; height:9px; overflow:hidden; }
+.prog-fill  { height:100%; border-radius:6px; transition:width 1s ease; }
+.scrollbox { overflow-y:auto; border:1px solid #e8edf2; border-radius:8px; }
+.scrollbox::-webkit-scrollbar { width:4px; }
+.scrollbox::-webkit-scrollbar-thumb { background:var(--secondary); border-radius:2px; }
+.row2 { display:flex; gap:24px; flex:1; min-height:0; }
+.col-main { flex:2.2; display:flex; flex-direction:column; min-width:0; }
+.col-side { flex:1; display:flex; flex-direction:column; gap:14px; min-width:0; }
+.insight { background:#f8fffe; border-left:4px solid var(--secondary); padding:12px 15px; border-radius:0 8px 8px 0; font-size:.85rem; color:#444; line-height:1.5; }
+.insight .lbl { font-weight:700; font-size:.7rem; text-transform:uppercase; letter-spacing:1px; color:var(--primary); margin-bottom:3px; }
+.insight.red  { border-left-color:var(--alert);   background:#fff8f8; }
+.insight.warn { border-left-color:var(--warning); background:#fffbf0; }
+.pill { display:inline-block; padding:3px 10px; border-radius:50px; font-size:.72rem; font-weight:700; }
+.pill-p { background:#e0f7fa; color:#006064; border:1px solid #00C2CB; }
+.pill-w { background:#fffde7; color:#8a6200; border:1px solid #F59E0B; }
+.pill-ok{ background:#e8f5e9; color:#2e7d32; border:1px solid #00B87A; }
+.pill-r { background:#ffebee; color:#c62828; border:1px solid #EF4444; }
+.forecast { background: linear-gradient(150deg, var(--primary) 0%, #071523 100%); border-radius:12px; padding:22px 18px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; min-width:190px; }
+.fc-label { font-size:.72rem; color:#7A92A8; text-transform:uppercase; letter-spacing:1px; font-weight:700; text-align:center; }
+.fc-circle { width:96px; height:96px; border-radius:50%; border:3px solid; display:flex; align-items:center; justify-content:center; flex-direction:column; margin:6px 0; }
+.fc-pct  { font-family:'Poppins',sans-serif; font-size:1.5rem; font-weight:800; }
+.fc-sub  { font-size:.62rem; color:#7A92A8; margin-top:1px; }
+.fc-desc { font-size:.77rem; color:#7A92A8; text-align:center; line-height:1.45; }
+.fc-gap  { background:var(--secondary); border-radius:6px; padding:7px 14px; font-size:.78rem; font-weight:700; color:var(--primary); text-align:center; width:100%; }
+.fc-gap.neg { background:var(--alert); color:#fff; }
+.closing-grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; flex:1; }
+.closing-card { background:#fff; border:1px solid #e8edf2; border-radius:12px; padding:26px; border-left:8px solid; box-shadow:0 4px 14px rgba(0,0,0,.05); display:flex; flex-direction:column; justify-content:center; }
+.closing-card h3 { font-size:.8rem; color:#666; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; }
+.closing-val  { font-family:'Poppins',sans-serif; font-size:1.9rem; font-weight:800; color:var(--primary); margin-bottom:4px; }
+.closing-desc { font-size:.88rem; color:#777; }
+.final-cta { margin-top:20px; background:linear-gradient(90deg, var(--primary) 0%, #071523 100%); color:#fff; padding:16px 36px; border-radius:10px; display:flex; justify-content:space-between; align-items:center; }
+.controls { display:flex; justify-content:space-between; align-items:center; width:100%; max-width:1200px; margin:0 auto; padding:10px 30px 14px; }
+.btn { background:var(--primary); color:#fff; border:none; padding:11px 26px; border-radius:50px; cursor:pointer; font-family:'Poppins',sans-serif; font-weight:600; font-size:.88rem; transition:background .25s, color .25s; }
+.btn:hover { background:var(--secondary); color:var(--primary); }
+.btn:disabled { background:#ccc; cursor:not-allowed; color:#fff; }
+.dot-nav { display:flex; gap:7px; align-items:center; }
+.dot { width:8px; height:8px; border-radius:50%; background:#ccc; cursor:pointer; transition:all .2s; display:inline-block; }
+.dot.on { background:var(--secondary); transform:scale(1.4); }
+.footer-note { position:absolute; bottom:14px; right:36px; font-size:.7rem; color:#bbb; }
+</style>
+</head>
+{# ============================================================
+   MACROS
+============================================================ #}
+{% macro money(v) -%}
+  ${{ "{:,.0f}".format(v|float).replace(",", ".") }}
+{%- endmacro %}
+
+{% macro pct(v) -%}
+  {{ "{:.0f}%".format(v * 100) }}
+{%- endmacro %}
+
+{% macro signed_pct(v) -%}
+  {{ "{:+.0f}%".format(v * 100) }}
+{%- endmacro %}
+
+{% macro estado_color(estado) -%}
+  {%- if estado == 'on_track' -%}pos
+  {%- elif estado == 'en_riesgo' -%}warn-col
+  {%- else -%}neg
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro estado_badge(estado) -%}
+  {%- if estado == 'on_track' -%}<span class="badge bg-green">On Track</span>
+  {%- elif estado == 'en_riesgo' -%}<span class="badge bg-yellow">En Riesgo</span>
+  {%- else -%}<span class="badge bg-red">Por Debajo</span>
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro estado_bar_color(estado) -%}
+  {%- if estado == 'on_track' -%}var(--accent)
+  {%- elif estado == 'en_riesgo' -%}var(--warning)
+  {%- else -%}var(--alert)
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro pill_estado(estado) -%}
+  {%- set e = estado|lower -%}
+  {%- if 'proceso' in e -%}<span class="pill pill-p">{{ estado }}</span>
+  {%- elif 'pendiente' in e -%}<span class="pill pill-w">{{ estado }}</span>
+  {%- elif 'ok' in e or 'listo' in e -%}<span class="pill pill-ok">{{ estado }}</span>
+  {%- elif 'bloqueado' in e -%}<span class="pill pill-r">{{ estado }}</span>
+  {%- else -%}<span class="pill pill-p">{{ estado }}</span>
+  {%- endif -%}
+{%- endmacro %}
+
+<body>
+<div class="slide-container">
+
+{# ============================================================
+   01 · PORTADA
+============================================================ #}
+<div class="slide cover active">
+  <div class="logo-pill">INSTANCE LATAM</div>
+  <h1>Update Comercial<br><span>{{ mes_label }}</span></h1>
+  <p class="sub">Revisión de avance de ventas por cuenta · Portafolio KAM</p>
+  <div class="cover-meta">
+    <div class="cover-meta-item"><strong>{{ kam_name }}</strong>KAM Instance Latam</div>
+    <div class="cover-meta-item"><strong>{{ fecha_corte_str }}</strong>Corte de datos</div>
+    <div class="cover-meta-item"><strong>{{ num_cuentas }} Cuentas</strong>Portafolio activo</div>
+    {% if canales_activos %}
+    <div class="cover-meta-item"><strong>{{ canales_activos }}</strong>Canales activos</div>
+    {% endif %}
+  </div>
+  <div class="cover-quote">"Milliseconds make millions"</div>
+</div>
+
+{# ============================================================
+   02 · RESUMEN KAM
+============================================================ #}
+<div class="slide">
+  <div class="slide-header">
+    <h1>Resumen Total KAM</h1>
+    <h2>Consolidado portafolio · Corte {{ fecha_corte_str }}</h2>
+  </div>
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="kpi-title">Presupuesto Mes</div>
+      <div class="kpi-value">{{ money(total.presupuesto_mes) }}</div>
+      <div class="kpi-sub">Meta mensual total portafolio</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-title">Venta MTD</div>
+      <div class="kpi-value">{{ money(total.venta_mtd_real) }}</div>
+      <div class="kpi-sub">Proforma MTD: {{ money(total.proforma_mtd) }} · Cumpto: <strong class="{{ estado_color(total.estado) }}">{{ pct(total.cumplimiento_pct) }}</strong></div>
+    </div>
+    <div class="kpi-card" style="border-bottom:4px solid var(--accent);">
+      <div class="kpi-title">Cierre Estimado</div>
+      <div class="kpi-value {{ estado_color(total.estado) }}">{{ money(total.cierre_estimado) }}</div>
+      <div class="kpi-sub">Cumpto proyectado: <strong class="{{ estado_color(total.estado) }}">{{ pct(total.cumplimiento_pct) }}</strong></div>
+    </div>
+  </div>
+  <div class="scrollbox" style="flex:1;min-height:0;">
+    <table class="tbl">
+      <thead><tr>
+        <th>Cliente</th>
+        <th class="c">Ppto Mes</th>
+        <th class="c">Proforma MTD</th>
+        <th class="c">Venta MTD</th>
+        <th class="c">Cumpto MTD</th>
+        <th class="c">Var vs MA</th>
+        <th class="c">Cierre Est.</th>
+        <th class="c">Cumpto Ppto</th>
+        <th class="c">Estado</th>
+      </tr></thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td><strong>{{ r.cliente }}</strong></td>
+          <td class="c">{{ money(r.presupuesto_mes) }}</td>
+          <td class="c" style="color:#888;">{{ money(r.proforma_mtd) }}</td>
+          <td class="c"><strong>{{ money(r.venta_mtd_real) }}</strong></td>
+          <td class="c"><strong class="{{ estado_color(r.estado) }}">{{ pct(r.cumplimiento_pct) }}</strong></td>
+          <td class="c {% if r.mom_pct >= 0 %}pos{% else %}neg{% endif %}"><strong>{{ signed_pct(r.mom_pct) }}</strong></td>
+          <td class="c">{{ money(r.cierre_estimado) }}</td>
+          <td class="c"><strong class="{{ estado_color(r.estado) }}">{{ pct(r.cumplimiento_pct) }}</strong></td>
+          <td class="c">{{ estado_badge(r.estado) }}</td>
+        </tr>
+        {% endfor %}
+        <tr class="total">
+          <td>TOTAL KAM</td>
+          <td class="c">{{ money(total.presupuesto_mes) }}</td>
+          <td class="c" style="color:#7A92A8;">{{ money(total.proforma_mtd) }}</td>
+          <td class="c">{{ money(total.venta_mtd_real) }}</td>
+          <td class="c cy">{{ pct(total.cumplimiento_pct) }}</td>
+          <td class="c gr">{{ signed_pct(total.mom_pct) }}</td>
+          <td class="c cy">{{ money(total.cierre_estimado) }}</td>
+          <td class="c cy">{{ pct(total.cumplimiento_pct) }}</td>
+          <td class="c"><span class="badge bg-cyan">{{ total.estado_label }}</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="footer-note">Cifras en CLP · Cumpto = Cierre Est. / Presupuesto</div>
+</div>
+
+{# ============================================================
+   POR CADA CLIENTE: 2 SLIDES (métricas + acciones)
+============================================================ #}
+{% for r in rows %}
+
+{# --- SLIDE: MÉTRICAS DEL CLIENTE --- #}
+<div class="slide">
+  <div class="slide-header">
+    <h1>{{ r.cliente }} <span style="font-weight:300;font-size:1.15rem;color:#999;">· Proyección de Ventas</span></h1>
+    <h2>Corte {{ fecha_corte_str }}{% if r.canal %} · Canal: {{ r.canal }}{% endif %}</h2>
+  </div>
+  <div class="kpi-row">
+    <div class="kpi-card"><div class="kpi-title">Presupuesto</div><div class="kpi-value">{{ money(r.presupuesto_mes) }}</div><div class="kpi-sub">Meta mensual</div></div>
+    <div class="kpi-card" style="border-bottom:3px solid {{ estado_bar_color(r.estado) }};">
+      <div class="kpi-title">Cierre Estimado</div>
+      <div class="kpi-value {{ estado_color(r.estado) }}">{{ money(r.cierre_estimado) }}</div>
+      <div class="kpi-sub">Cumpto: <strong class="{{ estado_color(r.estado) }}">{{ pct(r.cumplimiento_pct) }}</strong></div>
+    </div>
+    <div class="kpi-card"><div class="kpi-title">Venta MTD</div><div class="kpi-value">{{ money(r.venta_mtd_real) }}</div><div class="kpi-sub">Mes en curso</div></div>
+    <div class="kpi-card"><div class="kpi-title">Var vs Mes Ant.</div><div class="kpi-value {% if r.mom_pct >= 0 %}pos{% else %}neg{% endif %}">{{ signed_pct(r.mom_pct) }}</div><div class="kpi-sub">MA: {{ money(r.mes_anterior) }}</div></div>
+  </div>
+  <div style="margin-bottom:14px;">
+    <div style="display:flex;justify-content:space-between;font-size:.82rem;margin-bottom:5px;">
+      <span style="font-weight:700;color:var(--primary);">Avance vs Presupuesto</span>
+      <span class="{{ estado_color(r.estado) }}" style="font-weight:700;">Cierre Est. {{ pct(r.cumplimiento_pct) }}{% if r.estado == 'en_riesgo' %} — En Riesgo{% endif %}</span>
+    </div>
+    <div class="prog-track"><div class="prog-fill" style="width:{{ [r.cumplimiento_pct * 100, 100]|min }}%;background:{{ estado_bar_color(r.estado) }};"></div></div>
+    <div style="font-size:.72rem;color:#999;margin-top:3px;">MTD: {{ money(r.venta_mtd_real) }} · Meta: {{ money(r.presupuesto_mes) }} · Gap: {{ money(r.gap) if r.gap >= 0 else '−' ~ money(-r.gap) }}</div>
+  </div>
+  <div class="row2" style="flex:1;min-height:0;">
+    <div class="col-main scrollbox" style="padding:0;">
+      <table class="tbl" style="margin-top:0;">
+        <thead><tr><th colspan="3">Indicadores Clave</th></tr></thead>
+        <tbody>
+          <tr><td>Cumplimiento vs Presupuesto</td><td class="c"><strong class="{{ estado_color(r.estado) }}">{{ pct(r.cumplimiento_pct) }}</strong></td><td class="c">{{ estado_badge(r.estado) }}</td></tr>
+          <tr><td>Variación vs Mes Anterior</td><td class="c {% if r.mom_pct >= 0 %}pos{% else %}neg{% endif %}"><strong>{{ signed_pct(r.mom_pct) }}</strong></td><td class="c">{% if r.mom_pct >= 0 %}<span class="badge bg-green">↑ Creciendo</span>{% else %}<span class="badge bg-red">↓ Cayendo</span>{% endif %}</td></tr>
+          <tr><td>Gap vs Meta (Cierre Est.)</td><td class="c {% if r.gap >= 0 %}pos{% else %}neg{% endif %}"><strong>{{ '+' if r.gap >= 0 else '−' }}{{ money(r.gap if r.gap >= 0 else -r.gap) }}</strong></td><td class="c">{% if r.gap >= 0 %}<span class="badge bg-green">Sobre Meta</span>{% else %}<span class="badge bg-red">Bajo Meta</span>{% endif %}</td></tr>
+          <tr><td>Proforma MTD referencia</td><td class="c">{{ money(r.proforma_mtd) }}</td><td class="c"><span class="badge bg-blue">Referencia</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="col-side">
+      {% if r.insights %}
+        {% for ins in r.insights %}
+        <div class="insight {{ ins.tipo }}"><div class="lbl">{{ ins.lbl }}</div>{{ ins.texto }}</div>
+        {% endfor %}
+      {% else %}
+        <div class="insight {% if r.estado == 'por_debajo' %}red{% elif r.estado == 'en_riesgo' %}warn{% endif %}">
+          <div class="lbl">Análisis del período</div>
+          Cumplimiento {{ pct(r.cumplimiento_pct) }}{% if r.estado == 'on_track' %} — desempeño sobre meta.{% elif r.estado == 'en_riesgo' %} — en zona de riesgo.{% else %} — por debajo del plan.{% endif %}
+        </div>
+        <div class="insight">
+          <div class="lbl">Vs Mes Anterior</div>
+          {{ signed_pct(r.mom_pct) }} MoM. {% if r.mom_pct >= 0 %}Tendencia positiva.{% else %}Caída respecto al mes anterior.{% endif %}
+        </div>
+        <div class="insight {% if r.gap < 0 %}warn{% endif %}">
+          <div class="lbl">Proyección de cierre</div>
+          Cierre estimado {{ money(r.cierre_estimado) }} {% if r.gap >= 0 %}— sobre presupuesto.{% else %}— bajo presupuesto.{% endif %}
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{# --- SLIDE: ACCIONES DEL CLIENTE --- #}
+<div class="slide">
+  <div class="slide-header">
+    <h1>Acciones del mes en curso <span style="font-weight:300;font-size:1.15rem;color:#999;">· {{ r.cliente }}</span></h1>
+    <h2>Focos y compromisos{% if r.canal %} · {{ r.canal }}{% endif %}</h2>
+  </div>
+  <div class="row2" style="flex:1;min-height:0;gap:22px;align-items:stretch;">
+    <div class="col-main scrollbox">
+      <table class="tbl" style="margin-top:0;">
+        <thead><tr><th>Actividad</th><th>Pendiente / Detalle</th><th class="c">Deadline</th><th class="c">Estado</th></tr></thead>
+        <tbody>
+          {% if r.acciones %}
+            {% for a in r.acciones %}
+            <tr><td>{{ a.actividad }}</td><td>{{ a.detalle }}</td><td class="c">{{ a.deadline }}</td><td class="c">{{ pill_estado(a.estado) }}</td></tr>
+            {% endfor %}
+          {% else %}
+            <tr><td colspan="4" style="text-align:center;color:#999;padding:20px;">Sin acciones registradas — pendiente input manual o Notion</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+    <div style="max-width:200px;display:flex;align-items:center;">
+      <div class="forecast">
+        <div class="fc-label">Proyección<br>Cierre de Mes</div>
+        <div class="fc-circle" style="border-color:{{ estado_bar_color(r.estado) }};background:{% if r.estado == 'on_track' %}rgba(0,184,122,0.12){% elif r.estado == 'en_riesgo' %}rgba(245,158,11,0.12){% else %}rgba(239,68,68,0.12){% endif %};">
+          <span class="fc-pct {{ estado_color(r.estado) }}">{{ pct(r.cumplimiento_pct) }}</span>
+          <span class="fc-sub">cumpto</span>
+        </div>
+        <div class="fc-desc">{% if r.estado == 'on_track' %}Sobre presupuesto.{% elif r.estado == 'en_riesgo' %}En riesgo de cierre.{% else %}Cierre bajo plan.{% endif %}</div>
+        <div class="fc-gap {% if r.gap < 0 %}neg{% endif %}">Gap: {{ '+' if r.gap >= 0 else '−' }}{{ money(r.gap if r.gap >= 0 else -r.gap) }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endfor %}
+
+{# ============================================================
+   ÚLTIMA · CIERRE EJECUTIVO
+============================================================ #}
+<div class="slide">
+  <div class="slide-header">
+    <h1>Resumen Ejecutivo · {{ mes_label }}</h1>
+    <h2>Compromisos y próximos pasos · Instance Latam</h2>
+  </div>
+  <div class="closing-grid">
+    <div class="closing-card" style="border-color:var(--secondary);">
+      <h3>Cierre Estimado Total</h3>
+      <div class="closing-val">{{ money(closing.cierre_estimado) }}</div>
+      <div class="closing-desc">{{ pct(closing.cumplimiento_pct) }} cumplimiento · Portafolio {% if closing.cumplimiento_pct >= 0.95 %}sobre meta{% elif closing.cumplimiento_pct >= 0.80 %}en riesgo{% else %}bajo meta{% endif %}</div>
+      <div class="closing-desc" style="color:{% if closing.cumplimiento_pct >= 0.95 %}var(--accent){% elif closing.cumplimiento_pct >= 0.80 %}var(--warning){% else %}var(--alert){% endif %};font-weight:700;margin-top:6px;">
+        {% if closing.cumplimiento_pct >= 0.95 %}¡On Track!{% elif closing.cumplimiento_pct >= 0.80 %}En riesgo{% else %}Bajo meta{% endif %}
+      </div>
+    </div>
+    <div class="closing-card" style="border-color:var(--accent);">
+      <h3>Mejor Cuenta del Mes</h3>
+      <div class="closing-val">{{ closing.mejor_cuenta.cliente }}</div>
+      <div class="closing-desc">{{ pct(closing.mejor_cuenta.cumplimiento_pct) }} cumplimiento · {{ signed_pct(closing.mejor_cuenta.mom_pct) }} vs mes anterior</div>
+      <div class="closing-desc" style="color:var(--accent);font-weight:700;margin-top:6px;">{{ '+' if closing.mejor_cuenta.gap >= 0 else '−' }}{{ money(closing.mejor_cuenta.gap if closing.mejor_cuenta.gap >= 0 else -closing.mejor_cuenta.gap) }} {% if closing.mejor_cuenta.gap >= 0 %}sobre meta{% else %}bajo meta{% endif %}</div>
+    </div>
+    <div class="closing-card" style="border-color:var(--alert);">
+      <h3>Cuentas en Riesgo</h3>
+      <div class="closing-val" style="font-size:1.35rem;">
+        {% if closing.en_riesgo %}{{ closing.en_riesgo | join(' · ') }}{% else %}Sin cuentas en riesgo{% endif %}
+      </div>
+      <div class="closing-desc">Cumplimiento bajo 80% · Requieren aceleración</div>
+      <div class="closing-desc" style="color:var(--alert);font-weight:700;margin-top:6px;">Foco: Ads + Stock + Mix</div>
+    </div>
+    <div class="closing-card" style="border-color:var(--warning);">
+      <h3>Próxima Revisión</h3>
+      <div class="closing-val">{{ closing.proxima_revision or '—' }}</div>
+      <div class="closing-desc">Update quincenal KAM</div>
+      <div class="closing-desc" style="color:var(--warning);font-weight:700;margin-top:6px;">Reunión quincenal KAM</div>
+    </div>
+  </div>
+  <div class="final-cta">
+    <span style="font-size:1rem;font-weight:300;">{{ kam_name }} · KAM Instance Latam</span>
+    <span style="font-size:1.25rem;font-weight:700;">Update Comercial {{ mes_label }} ✓</span>
+    <span style="font-size:.82rem;font-style:italic;opacity:.5;">"Milliseconds make millions"</span>
+  </div>
+</div>
+
+</div><!-- /slide-container -->
+
+<div class="controls">
+  <button class="btn" id="prevBtn" onclick="go(-1)">← Anterior</button>
+  <div class="dot-nav" id="dots"></div>
+  <button class="btn" id="nextBtn" onclick="go(1)">Siguiente →</button>
+</div>
+
+<script>
+let cur = 0;
+const slides = document.querySelectorAll('.slide');
+const N = slides.length;
+const prev = document.getElementById('prevBtn');
+const next = document.getElementById('nextBtn');
+const dots = document.getElementById('dots');
+slides.forEach((_,i) => {
+  const d = document.createElement('div');
+  d.className = 'dot' + (i===0?' on':'');
+  d.onclick = () => goTo(i);
+  dots.appendChild(d);
+});
+function goTo(n) {
+  if (n<0||n>=N) return;
+  slides[cur].classList.remove('active');
+  document.querySelectorAll('.dot')[cur].classList.remove('on');
+  cur = n;
+  slides[cur].classList.add('active');
+  document.querySelectorAll('.dot')[cur].classList.add('on');
+  prev.disabled = cur===0;
+  next.disabled = cur===N-1;
+  next.style.display = cur===N-1?'none':'block';
+}
+function go(d) { goTo(cur+d); }
+document.addEventListener('keydown', e => {
+  if (e.key==='ArrowRight'||e.key==='ArrowDown') go(1);
+  if (e.key==='ArrowLeft' ||e.key==='ArrowUp')   go(-1);
+});
+prev.disabled = true;
+</script>
+</body>
+</html>

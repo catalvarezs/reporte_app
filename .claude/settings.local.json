@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/python.exe -m pip install \"psycopg[binary]==3.2.3\")",
+      "Bash(gh auth *)",
+      "Bash(gh api *)",
+      "Bash(git init *)",
+      "Bash(git add *)"
+    ]
+  }
+}
