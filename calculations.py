@@ -54,6 +54,8 @@ def calcular_cliente(
     insights: Optional[list[Insight]] = None,
     acciones: Optional[list[Accion]] = None,
 ) -> ClienteRow:
+    # Dias transcurridos incluyendo fecha_corte (coherente con que la venta MTD
+    # incluye todo el dia de hoy). fecha_corte=18 → 18/31.
     dias_del_mes = monthrange(fecha_corte.year, fecha_corte.month)[1]
     dias_transcurridos = fecha_corte.day
     frac = dias_transcurridos / dias_del_mes if dias_del_mes else 0

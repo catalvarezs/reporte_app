@@ -1,15 +1,22 @@
 """
 Cliente al MCP de Instance (https://backendia.instancelatam.com/sse).
 
-Lee ventas reales desde `orders` agregando por cliente:
-  - mtod              = SUM(precio_sin_shipping) del mes en curso hasta fecha_corte (inclusive)
-  - mes_anterior_mtd  = SUM(precio_sin_shipping) del mes anterior hasta el mismo dia
-  - canal             = canales activos en la ventana [mes anterior .. fecha_corte]
+Lee ventas reales desde `products_in_orders` agregando por cliente:
+  - mtod              = SUM(qty * precio) del mes en curso, [primero_del_mes, fecha_corte)
+  - mes_anterior_mtd  = SUM(qty * precio) del mes anterior espejando el dia
+  - canal             = canales activos en la ventana [mes anterior .. fecha_corte)
+
+Nota: `products_in_orders` es line-item-level y es la fuente que matchea el
+dashboard de Looker. `orders.precio_sin_shipping` esta inflado para algunos
+canales (ej. Vtex), asi que NO se usa para el monto.
+
+Pais queda en blanco aqui: el LEFT JOIN a `orders` para traerlo agotaba el
+timeout del MCP, y el llamador hace match por cliente (no por pais).
 
 El plan_mensual NO viene del MCP — se ingresa en el formulario.
 
-Las queries envuelven `orders` en un subquery para que el rewrite server-side
-(MYSQL_ORDERS_SCOPE_*) quede contenido adentro y no rompa WHERE/GROUP BY del afuera.
+Las queries envuelven cada tabla en un subquery para que el rewrite server-side
+(MYSQL_ORDERS_SCOPE_*) quede contenido adentro y no rompa WHERE/GROUP BY.
 """
 import json
 import logging
@@ -101,7 +108,11 @@ async def _run_query(session: ClientSession, sql: str) -> tuple[list[dict], str]
 
 
 def _prev_month_window(fecha_corte: date) -> tuple[date, date]:
-    """[prev_month_first, prev_month_end_exclusive] espejando el dia de fecha_corte."""
+    """[prev_month_first, prev_month_end_exclusive] espejando fecha_corte (inclusivo).
+
+    Para fecha_corte=2026-05-18, devuelve (2026-04-01, 2026-04-19) — incluye
+    todo el dia 18 de abril, equivalente a "datos hasta el final de ese dia".
+    """
     if fecha_corte.month == 1:
         prev_year, prev_month = fecha_corte.year - 1, 12
     else:
@@ -123,25 +134,16 @@ async def list_clientes_in_scope(session: ClientSession) -> list[dict]:
     return [{"cliente": r.get("cliente"), "pais": r.get("pais")} for r in rows if r.get("cliente")]
 
 
-_CANALES_EXCLUIDOS = ("Vtex",)
-_ESTADOS_OC_EXCLUIDOS = ("cancelled", "canceled", "returned", "refunded", "partially_refunded")
-_ESTADOS_PAGO_EXCLUIDOS = ("refunded", "in_mediation")
+# Estados que NO se cuentan como venta. El dashboard mantiene 'partially_refunded'
+# (la parte cobrada cuenta), 'paid', 'delivered', 'shipped', 'pending', 'invoiced',
+# 'ready_to_ship', 'ready-for-handling'. No filtramos por estado_pago porque
+# products_in_orders no expone esa columna y el dashboard tampoco lo necesita.
+_ESTADOS_OC_EXCLUIDOS = ("cancelled", "canceled", "returned", "refunded")
 
 
-def _sql_filtro_ventas() -> str:
-    """Filtro SQL aplicado a todas las metricas de venta real.
-
-    Excluye: canal Vtex (B2B/mayorista), pedidos cancelados/devueltos/reembolsados,
-    y pagos en mediacion/reembolsados.
-    """
-    canales = ",".join(f"'{c}'" for c in _CANALES_EXCLUIDOS)
+def _sql_filtro_estados() -> str:
     estados_oc = ",".join(f"'{e}'" for e in _ESTADOS_OC_EXCLUIDOS)
-    estados_pago = ",".join(f"'{e}'" for e in _ESTADOS_PAGO_EXCLUIDOS)
-    return (
-        f"canal_de_venta NOT IN ({canales}) "
-        f"AND estado_oc NOT IN ({estados_oc}) "
-        f"AND (estado_pago IS NULL OR estado_pago NOT IN ({estados_pago}))"
-    )
+    return f"estado_oc NOT IN ({estados_oc})"
 
 
 async def fetch_ventas_por_cliente(
@@ -153,23 +155,28 @@ async def fetch_ventas_por_cliente(
     de la sesion. El llamador filtra por los que le interesan.
     Tambien devuelve (sql, raw) para debug.
     """
+    # fecha_corte es la fecha del snapshot ("hoy"); incluimos TODO el dia
+    # de fecha_corte (datos hasta el final de hoy), por eso +1 dia exclusivo.
     cur_start = fecha_corte.replace(day=1)
     cur_end = fecha_corte + timedelta(days=1)
     prev_start, prev_end = _prev_month_window(fecha_corte)
-    flt = _sql_filtro_ventas()
+    flt = _sql_filtro_estados()
 
+    # No hacemos JOIN con orders para traer pais: el LEFT JOIN sobre el
+    # rewrite del scope explotaba el tiempo limite del MCP. El llamador hace
+    # match por cliente (no por pais), asi que pais queda vacio aqui.
     sql = (
-        "SELECT cliente, pais, "
-        f"ROUND(SUM(CASE WHEN fecha_creacion >= '{cur_start}' AND fecha_creacion < '{cur_end}' AND {flt} THEN precio_sin_shipping ELSE 0 END)) AS mtod, "
-        f"ROUND(SUM(CASE WHEN fecha_creacion >= '{prev_start}' AND fecha_creacion < '{prev_end}' AND {flt} THEN precio_sin_shipping ELSE 0 END)) AS mes_anterior_mtd, "
+        "SELECT cliente, "
+        f"ROUND(SUM(CASE WHEN fecha_creacion >= '{cur_start}' AND fecha_creacion < '{cur_end}' AND {flt} THEN qty * precio ELSE 0 END)) AS mtod, "
+        f"ROUND(SUM(CASE WHEN fecha_creacion >= '{prev_start}' AND fecha_creacion < '{prev_end}' AND {flt} THEN qty * precio ELSE 0 END)) AS mes_anterior_mtd, "
         f"GROUP_CONCAT(DISTINCT CASE WHEN fecha_creacion >= '{prev_start}' AND fecha_creacion < '{cur_end}' AND {flt} THEN canal_de_venta END SEPARATOR ' + ') AS canal "
-        "FROM (SELECT cliente, pais, fecha_creacion, precio_sin_shipping, canal_de_venta, estado_oc, estado_pago FROM orders) o "
-        "GROUP BY cliente, pais"
+        "FROM (SELECT cliente, fecha_creacion, qty, precio, canal_de_venta, estado_oc FROM products_in_orders) o "
+        "GROUP BY cliente"
     )
     rows, raw = await _run_query(session, sql)
     out: dict[tuple[str, str], dict] = {}
     for r in rows:
-        key = (r.get("cliente") or "", r.get("pais") or "")
+        key = (r.get("cliente") or "", "")
         out[key] = {
             "mtod": float(r.get("mtod") or 0),
             "mes_anterior_mtd": float(r.get("mes_anterior_mtd") or 0),
