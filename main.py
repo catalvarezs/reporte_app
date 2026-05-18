@@ -323,9 +323,13 @@ async def generar(request: Request):
             "debug_info": [],
         })
 
+    def _norm(s: str) -> str:
+        return (s or "").strip().casefold()
+
     for cliente in clientes_sel:
+        cliente_norm = _norm(cliente)
         match_key = next(
-            ((c, p) for (c, p) in por_cliente.keys() if c == cliente),
+            ((c, p) for (c, p) in por_cliente.keys() if _norm(c) == cliente_norm),
             None,
         )
         resumen = por_cliente.get(match_key, {}) if match_key else {}
