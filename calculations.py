@@ -34,6 +34,8 @@ class ClienteRow:
     estado: str
     insights: list = field(default_factory=list)
     acciones: list = field(default_factory=list)
+    # Serie mensual para los graficos: {labels:[...], total:[...], series:{canal:[...]}, has_data:bool}
+    evolucion: dict = field(default_factory=dict)
 
 
 def _estado(cumplimiento: float) -> str:
@@ -53,6 +55,7 @@ def calcular_cliente(
     canal: str = "",
     insights: Optional[list[Insight]] = None,
     acciones: Optional[list[Accion]] = None,
+    evolucion: Optional[dict] = None,
 ) -> ClienteRow:
     # Dias transcurridos incluyendo fecha_corte (coherente con que la venta MTD
     # incluye todo el dia de hoy). fecha_corte=18 → 18/31.
@@ -80,6 +83,7 @@ def calcular_cliente(
         estado=_estado(cumplimiento),
         insights=insights or [],
         acciones=acciones or [],
+        evolucion=evolucion or {},
     )
 
 
@@ -94,7 +98,7 @@ def build_report_context(
     rows: list[ClienteRow],
     mes_label: str,
     fecha_corte: date,
-    kam_name: str = "Fernanda",
+    kam_name: str = "Catalina",
     proxima_revision: str = "",
 ) -> dict:
     if not rows:
