@@ -97,12 +97,15 @@ if not CLIENT_ID or not CLIENT_SECRET:
     raise RuntimeError("CLIENT_ID y CLIENT_SECRET deben estar en .env")
 
 app = FastAPI(title="Update Comercial")
+# En produccion (HTTPS) conviene COOKIE_SECURE=true para marcar la cookie Secure;
+# en local sobre http queda en false para que la sesion funcione igual.
+_COOKIE_SECURE = os.getenv("COOKIE_SECURE", "").lower() in ("1", "true", "yes")
 app.add_middleware(
     SessionMiddleware,
     secret_key=SESSION_SECRET,
     session_cookie="reporte_session",
     same_site="lax",
-    https_only=False,
+    https_only=_COOKIE_SECURE,
     max_age=60 * 60 * 8,
 )
 

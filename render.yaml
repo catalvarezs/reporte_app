@@ -1,0 +1,19 @@
+# Render Blueprint. En Render: New + -> Blueprint -> conecta este repo.
+# Las variables marcadas sync:false se cargan a mano en el dashboard (secretas,
+# nunca quedan en el repo). Ver DEPLOY.md para el paso a paso.
+services:
+  - type: web
+    name: reporte-app
+    runtime: docker
+    plan: free
+    region: oregon
+    healthCheckPath: /
+    envVars:
+      - key: SESSION_SECRET
+        sync: false
+      - key: CLIENT_ID
+        sync: false
+      - key: CLIENT_SECRET
+        sync: false
+      - key: COOKIE_SECURE
+        value: "true"
