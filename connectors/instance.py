@@ -171,6 +171,11 @@ async def fetch_ventas_por_cliente(
         f"ROUND(SUM(CASE WHEN fecha_creacion >= '{prev_start}' AND fecha_creacion < '{prev_end}' AND {flt} THEN qty * precio ELSE 0 END)) AS mes_anterior_mtd, "
         f"GROUP_CONCAT(DISTINCT CASE WHEN fecha_creacion >= '{prev_start}' AND fecha_creacion < '{cur_end}' AND {flt} THEN canal_de_venta END SEPARATOR ' + ') AS canal "
         "FROM (SELECT cliente, fecha_creacion, qty, precio, canal_de_venta, estado_oc FROM products_in_orders) o "
+        # Podamos al rango [mes anterior .. fecha_corte) ANTES de agregar: sin esto
+        # el MCP escanea toda la historia de products_in_orders y supera el limite
+        # de tiempo de ejecucion. El WHERE va en el query externo (no en el subquery)
+        # para no interferir con el rewrite server-side del scope.
+        f"WHERE fecha_creacion >= '{prev_start}' AND fecha_creacion < '{cur_end}' AND {flt} "
         "GROUP BY cliente"
     )
     rows, raw = await _run_query(session, sql)
@@ -182,4 +187,39 @@ async def fetch_ventas_por_cliente(
             "mes_anterior_mtd": float(r.get("mes_anterior_mtd") or 0),
             "canal": (r.get("canal") or "").strip(" +") or "",
         }
+    return out, sql, raw
+
+
+async def fetch_evolucion_mensual(
+    session: ClientSession,
+    desde: date,
+    fecha_corte: date,
+) -> tuple[list[dict], str, str]:
+    """Serie mensual por cliente y canal para los graficos de evolucion.
+
+    Devuelve filas [{cliente, ym ('YYYY-MM'), canal, total}, ...] para el rango
+    [desde, fecha_corte]. El llamador agrega por grupo y arma las series. Igual
+    que en ventas, el WHERE por fecha poda antes de agrupar para no pasar el
+    limite de tiempo del MCP.
+    """
+    cur_end = fecha_corte + timedelta(days=1)
+    flt = _sql_filtro_estados()
+    sql = (
+        "SELECT cliente, "
+        "DATE_FORMAT(fecha_creacion, '%Y-%m') AS ym, "
+        "canal_de_venta AS canal, "
+        "ROUND(SUM(qty * precio)) AS total "
+        "FROM (SELECT cliente, fecha_creacion, qty, precio, canal_de_venta, estado_oc FROM products_in_orders) o "
+        f"WHERE fecha_creacion >= '{desde}' AND fecha_creacion < '{cur_end}' AND {flt} "
+        "GROUP BY cliente, ym, canal"
+    )
+    rows, raw = await _run_query(session, sql)
+    out: list[dict] = []
+    for r in rows:
+        out.append({
+            "cliente": r.get("cliente") or "",
+            "ym": r.get("ym") or "",
+            "canal": (r.get("canal") or "").strip() or "Sin canal",
+            "total": float(r.get("total") or 0),
+        })
     return out, sql, raw
