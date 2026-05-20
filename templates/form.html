@@ -47,6 +47,13 @@
     .accion-row .remove { background: none; border: none; color: #b00020; cursor: pointer; font-size: 18px; padding: 0 6px; line-height: 1; }
     .accion-row .remove:hover { color: #82071e; }
     .acciones-actions { display: flex; gap: 10px; }
+    .signature { margin: 48px 0 28px; display: flex; justify-content: center; }
+    .signature a { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: #888; padding: 6px 14px 6px 8px; border-radius: 999px; border: 1px solid #e2e6ea; transition: color .2s, border-color .2s, background .2s; }
+    .signature a:hover { color: #1A2E4A; border-color: #1A2E4A; background: #fafbfc; }
+    .sig-avatar { width: 30px; height: 30px; border-radius: 50%; display: block; }
+    .sig-text { display: flex; flex-direction: column; line-height: 1.2; }
+    .sig-role { font-size: 10px; text-transform: uppercase; letter-spacing: .9px; color: #aaa; }
+    .sig-name { font-size: 13px; font-weight: 600; }
   </style>
 </head>
 <body>
@@ -218,5 +225,15 @@
       <a class="btn" href="/login">Conectar a DB</a>
     </div>
   {% endif %}
+
+  <footer class="signature">
+    <a href="https://github.com/catalvarezs" target="_blank" rel="noopener">
+      <img class="sig-avatar" src="https://github.com/catalvarezs.png?size=60" alt="catalvarezs en GitHub">
+      <span class="sig-text">
+        <span class="sig-role">Developer</span>
+        <span class="sig-name">@catalvarezs</span>
+      </span>
+    </a>
+  </footer>
 </body>
 </html>
