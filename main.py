@@ -1,8 +1,10 @@
+import asyncio
 import base64
 import hashlib
 import os
 import re
 import secrets
+import sys
 import time
 import traceback
 import unicodedata
@@ -61,8 +63,10 @@ def _slug_filename(text: str) -> str:
     s = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
     s = re.sub(r"[^a-zA-Z0-9]+", "-", s).strip("-").lower()
     return s or "reporte"
+import charts
 from connectors.instance import (
     MCPQueryError,
+    fetch_evolucion_mensual,
     fetch_ventas_por_cliente,
     list_clientes_in_scope,
     mcp_session,
@@ -73,8 +77,16 @@ load_dotenv()
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
-OAUTH_AUTHORIZE_URL = "https://backendia.instancelatam.com/authorize"
-OAUTH_TOKEN_URL = "https://backendia.instancelatam.com/token"
+# El recurso /sse tiene su PROPIO authorization server (issuer .../sse), distinto
+# del AS de la base. /sse solo acepta tokens emitidos por estos endpoints; usar los
+# de la base (.../authorize, .../token) da 401. Descubierto via
+# /.well-known/oauth-authorization-server/sse.
+OAUTH_AUTHORIZE_URL = "https://backendia.instancelatam.com/sse/authorize"
+OAUTH_TOKEN_URL = "https://backendia.instancelatam.com/sse/token"
+# RFC 8707 Resource Indicator: el MCP exige que el access_token quede "bound" a
+# este recurso; sin esto /sse responde 401. Debe coincidir con el campo
+# "resource" de /.well-known/oauth-protected-resource/sse.
+OAUTH_RESOURCE = "https://backendia.instancelatam.com/sse"
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 SESSION_SECRET = os.getenv("SESSION_SECRET")
@@ -106,6 +118,34 @@ def _mes_label(mes_iso: str) -> str:
     return f"{_MESES_ES[int(m)]} {y}"
 
 
+_MESES_ABBR = {
+    1: "Ene", 2: "Feb", 3: "Mar", 4: "Abr", 5: "May", 6: "Jun",
+    7: "Jul", 8: "Ago", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic",
+}
+
+
+def _add_months(d: date, n: int) -> date:
+    """Suma n meses (puede ser negativo) al primer dia del mes de d."""
+    total = (d.year * 12 + (d.month - 1)) + n
+    return date(total // 12, total % 12 + 1, 1)
+
+
+def _month_seq(desde: date, hasta: date) -> list[date]:
+    """Lista de primeros-de-mes desde 'desde' hasta el mes de 'hasta', inclusive."""
+    out: list[date] = []
+    cur = desde.replace(day=1)
+    end = hasta.replace(day=1)
+    while cur <= end:
+        out.append(cur)
+        cur = _add_months(cur, 1)
+    return out
+
+
+def _mes_corto(d: date) -> str:
+    """date -> 'May 26' (etiqueta corta para el eje X de los graficos)."""
+    return f"{_MESES_ABBR[d.month]} {d.year % 100:02d}"
+
+
 def _pkce_pair() -> tuple[str, str]:
     verifier = base64.urlsafe_b64encode(secrets.token_bytes(64)).rstrip(b"=").decode()
     digest = hashlib.sha256(verifier.encode()).digest()
@@ -121,6 +161,29 @@ def _is_authenticated(request: Request) -> bool:
     if not expires_at:
         return True
     return datetime.fromisoformat(expires_at) > datetime.now(timezone.utc)
+
+
+def _find_in_group(exc: BaseException, cls: type) -> BaseException | None:
+    """Busca una excepcion de tipo cls dentro de un (posible) ExceptionGroup.
+
+    sse_client / ClientSession envuelven los errores en anyio TaskGroups, asi que
+    ni un 401 (httpx.HTTPStatusError) ni un MCPQueryError llegan directos: vienen
+    anidados en uno o mas ExceptionGroup. Recorremos sub-excepciones y __cause__.
+    """
+    if isinstance(exc, cls):
+        return exc
+    for sub in getattr(exc, "exceptions", None) or ():
+        found = _find_in_group(sub, cls)
+        if found is not None:
+            return found
+    cause = exc.__cause__
+    if cause is not None:
+        return _find_in_group(cause, cls)
+    return None
+
+
+def _first_http_status_error(exc: BaseException) -> httpx.HTTPStatusError | None:
+    return _find_in_group(exc, httpx.HTTPStatusError)  # type: ignore[return-value]
 
 
 def _callback_url(request: Request) -> str:
@@ -148,18 +211,23 @@ async def home(request: Request):
     clientes_disponibles: list[dict] = []
     error_clientes: str | None = None
     if authenticated:
+        token = request.session.get("oauth", {}).get("access_token") or ""
         try:
-            async with mcp_session(request.session["oauth"]["access_token"]) as mcp:
+            async with mcp_session(token) as mcp:
                 clientes_disponibles = await list_clientes_in_scope(mcp)
         except MCPQueryError as e:
             error_clientes = str(e)
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code in (401, 403):
+        except Exception as e:
+            # Los errores del MCP llegan envueltos en ExceptionGroup (anyio); un
+            # 401/403 (token vencido) -> reautenticar; el resto se muestra al usuario.
+            http_err = _first_http_status_error(e)
+            if http_err is not None and http_err.response.status_code in (401, 403):
                 request.session.clear()
                 return RedirectResponse("/login", status_code=302)
-            error_clientes = f"HTTP {e.response.status_code}: {e}"
-        except Exception as e:
-            error_clientes = str(e)
+            if http_err is not None:
+                error_clientes = f"MCP rechazo la conexion: HTTP {http_err.response.status_code} en {http_err.request.url}"
+            else:
+                error_clientes = str(e)
 
     today = date.today()
     for c in clientes_disponibles:
@@ -174,6 +242,8 @@ async def home(request: Request):
             "error_clientes": error_clientes,
             "default_mes": today.strftime("%Y-%m"),
             "default_fecha_corte": today.strftime("%Y-%m-%d"),
+            # Por defecto, los graficos arrancan 5 meses atras (6 meses en total).
+            "default_grafico_desde": _add_months(today, -5).strftime("%Y-%m"),
         },
     )
 
@@ -191,6 +261,7 @@ def login(request: Request):
         "state": state,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
+        "resource": OAUTH_RESOURCE,
     }
     return RedirectResponse(f"{OAUTH_AUTHORIZE_URL}?{urlencode(params)}", status_code=302)
 
@@ -223,6 +294,7 @@ def callback(
         "client_id": CLIENT_ID,
         "client_secret": CLIENT_SECRET,
         "code_verifier": verifier,
+        "resource": OAUTH_RESOURCE,
     }
     resp = httpx.post(OAUTH_TOKEN_URL, data=data, timeout=30.0)
     if resp.status_code != 200:
@@ -258,15 +330,38 @@ async def generar(request: Request):
     clientes_sel = [c for c in form.getlist("clientes_sel") if c.strip()]
     mes = form.get("mes", "")
     fecha_corte_raw = form.get("fecha_corte", "")
-    kam_name = (form.get("kam_name") or "").strip() or "Fernanda"
+    kam_name = (form.get("kam_name") or "").strip() or "Catalina"
 
     if not clientes_sel or not mes or not fecha_corte_raw:
         return RedirectResponse("/", status_code=302)
 
     fecha_corte_d = datetime.strptime(fecha_corte_raw, "%Y-%m-%d").date()
+
+    # Mes de inicio de los graficos de evolucion. Default: 5 meses atras.
+    try:
+        grafico_desde_d = datetime.strptime(form.get("grafico_desde", ""), "%Y-%m").date()
+    except ValueError:
+        grafico_desde_d = _add_months(fecha_corte_d, -5)
+    grafico_desde_d = grafico_desde_d.replace(day=1)
+    if grafico_desde_d > fecha_corte_d.replace(day=1):
+        grafico_desde_d = fecha_corte_d.replace(day=1)
+
     planes: dict[str, float] = {}
+    grupos_raw: dict[str, str] = {}
+    cliente_desde: dict[str, date] = {}
+    tope_mes = fecha_corte_d.replace(day=1)
     for cliente in clientes_sel:
-        planes[cliente] = _parse_monto(form.get(f"plan_{_cliente_slug(cliente)}", ""))
+        slug = _cliente_slug(cliente)
+        planes[cliente] = _parse_monto(form.get(f"plan_{slug}", ""))
+        grupos_raw[cliente] = (form.get(f"grupo_{slug}", "") or "").strip()
+        # Override de rango de grafico por cliente; si esta vacio usa el global.
+        try:
+            od = datetime.strptime(form.get(f"gdesde_{slug}", ""), "%Y-%m").date().replace(day=1)
+        except ValueError:
+            od = grafico_desde_d
+        cliente_desde[cliente] = min(od, tope_mes)
+    # La query trae el rango mas amplio pedido; cada grupo recorta el suyo.
+    global_min_desde = min(cliente_desde.values()) if cliente_desde else grafico_desde_d
 
     acciones_por_cliente: dict[str, list[Accion]] = {c: [] for c in clientes_sel}
     a_cli = form.getlist("accion_cliente")
@@ -292,29 +387,35 @@ async def generar(request: Request):
     sql_str = ""
     raw_str = ""
 
+    evol_rows: list[dict] = []
     try:
         async with mcp_session(access_token) as mcp:
             por_cliente, sql_str, raw_str = await fetch_ventas_por_cliente(mcp, fecha_corte_d)
-    except MCPQueryError as e:
-        return templates.TemplateResponse("error.html", {
-            "request": request,
-            "title": "MCP devolvio error",
-            "error": str(e),
-            "trace": None,
-            "debug_info": [{"sql": e.sql, "raw": e.raw, "error": str(e)}],
-        })
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code in (401, 403):
+            evol_rows, _, _ = await fetch_evolucion_mensual(mcp, global_min_desde, fecha_corte_d)
+    except Exception as e:
+        # MCPQueryError y httpx.HTTPStatusError llegan envueltos en ExceptionGroup
+        # (anyio), asi que desenvolvemos para mostrar el error real y no un generico.
+        http_err = _first_http_status_error(e)
+        if http_err is not None and http_err.response.status_code in (401, 403):
             request.session.clear()
             return RedirectResponse("/login", status_code=302)
-        return templates.TemplateResponse("error.html", {
-            "request": request,
-            "title": f"HTTP {e.response.status_code} contra el MCP",
-            "error": str(e),
-            "trace": traceback.format_exc(),
-            "debug_info": [],
-        })
-    except Exception as e:
+        mcp_err = _find_in_group(e, MCPQueryError)
+        if mcp_err is not None:
+            return templates.TemplateResponse("error.html", {
+                "request": request,
+                "title": "MCP devolvio error",
+                "error": str(mcp_err),
+                "trace": None,
+                "debug_info": [{"sql": mcp_err.sql, "raw": mcp_err.raw, "error": str(mcp_err)}],
+            })
+        if http_err is not None:
+            return templates.TemplateResponse("error.html", {
+                "request": request,
+                "title": f"HTTP {http_err.response.status_code} contra el MCP",
+                "error": str(http_err),
+                "trace": traceback.format_exc(),
+                "debug_info": [],
+            })
         return templates.TemplateResponse("error.html", {
             "request": request,
             "title": "No se pudo conectar al MCP",
@@ -326,31 +427,99 @@ async def generar(request: Request):
     def _norm(s: str) -> str:
         return (s or "").strip().casefold()
 
+    def _match_resumen(nombre: str) -> tuple[dict, bool]:
+        n = _norm(nombre)
+        mk = next(((c, p) for (c, p) in por_cliente.keys() if _norm(c) == n), None)
+        return (por_cliente.get(mk, {}) if mk else {}), (mk is not None)
+
+    # Indice de evolucion mensual por cliente normalizado y secuencia de meses
+    # (continua, incluyendo meses sin ventas) para el eje X de los graficos.
+    evol_idx: dict[str, list[tuple[str, str, float]]] = {}
+    for er in evol_rows:
+        c = er.get("cliente")
+        if c:
+            evol_idx.setdefault(_norm(c), []).append(
+                (er.get("ym") or "", er.get("canal") or "Sin canal", float(er.get("total") or 0))
+            )
+    def _evolucion_grupo(miembros: list[str], desde: date) -> dict:
+        # Eje X continuo (incluye meses sin ventas) desde el mes elegido al corte.
+        seq = _month_seq(desde, fecha_corte_d)
+        yms = [d.strftime("%Y-%m") for d in seq]
+        labels = [_mes_corto(d) for d in seq]
+        mes_total = {ym: 0.0 for ym in yms}
+        canal_mes: dict[str, dict[str, float]] = {}
+        for miembro in miembros:
+            for (ym, canal, total) in evol_idx.get(_norm(miembro), []):
+                if ym not in mes_total:
+                    continue
+                mes_total[ym] += total
+                d = canal_mes.setdefault(canal, {})
+                d[ym] = d.get(ym, 0.0) + total
+        # Top 5 canales por venta total; el resto se agrupa en "Otros".
+        rank = sorted(canal_mes.items(), key=lambda kv: sum(kv[1].values()), reverse=True)
+        series = {name: [vals.get(ym, 0.0) for ym in yms] for name, vals in rank[:5]}
+        if rank[5:]:
+            series["Otros"] = [sum(vals.get(ym, 0.0) for _, vals in rank[5:]) for ym in yms]
+        total_serie = [mes_total[ym] for ym in yms]
+        return {
+            "labels": labels,
+            "total": total_serie,
+            "series": series,
+            "has_data": sum(total_serie) > 0,
+        }
+
+    # Agrupar los clientes seleccionados por el campo "Grupo". Clave = grupo
+    # normalizado; si esta vacio, el cliente va solo (clave propia). El label
+    # visible es el texto del grupo tal cual (o el nombre del cliente si va solo).
+    grupos: dict[tuple, dict] = {}
+    orden: list[tuple] = []
     for cliente in clientes_sel:
-        cliente_norm = _norm(cliente)
-        match_key = next(
-            ((c, p) for (c, p) in por_cliente.keys() if _norm(c) == cliente_norm),
-            None,
-        )
-        resumen = por_cliente.get(match_key, {}) if match_key else {}
-        plan = planes.get(cliente, 0.0)
-        row = calcular_cliente(
-            cliente=cliente,
+        g = grupos_raw.get(cliente, "")
+        key = ("g", _norm(g)) if g else ("c", _norm(cliente))
+        if key not in grupos:
+            grupos[key] = {"label": g or cliente, "miembros": [], "plan": 0.0, "acciones": []}
+            orden.append(key)
+        grupos[key]["miembros"].append(cliente)
+        grupos[key]["plan"] += planes.get(cliente, 0.0)
+        grupos[key]["acciones"].extend(acciones_por_cliente.get(cliente, []))
+
+    for key in orden:
+        grp = grupos[key]
+        g_mtod = g_ma = 0.0
+        canales: list[str] = []
+        no_encontrados: list[str] = []
+        for miembro in grp["miembros"]:
+            resumen, encontrado = _match_resumen(miembro)
+            if not encontrado:
+                no_encontrados.append(miembro)
+            g_mtod += float(resumen.get("mtod") or 0)
+            g_ma += float(resumen.get("mes_anterior_mtd") or 0)
+            for c in (resumen.get("canal") or "").split(" + "):
+                c = c.strip()
+                if c and c not in canales:
+                    canales.append(c)
+        rows.append(calcular_cliente(
+            cliente=grp["label"],
             fecha_corte=fecha_corte_d,
-            plan_mensual=plan,
-            mtod=float(resumen.get("mtod") or 0),
-            mes_anterior_mtd=float(resumen.get("mes_anterior_mtd") or 0),
-            canal=resumen.get("canal") or "",
-            acciones=acciones_por_cliente.get(cliente, []),
-        )
-        rows.append(row)
+            plan_mensual=grp["plan"],
+            mtod=g_mtod,
+            mes_anterior_mtd=g_ma,
+            canal=" + ".join(canales),
+            acciones=grp["acciones"],
+            evolucion=_evolucion_grupo(
+                grp["miembros"],
+                min((cliente_desde[m] for m in grp["miembros"]), default=grafico_desde_d),
+            ),
+        ))
         debug_info.append({
-            "cliente": cliente,
-            "encontrado": match_key is not None,
-            "mtod": resumen.get("mtod") or 0,
-            "mes_anterior_mtd": resumen.get("mes_anterior_mtd") or 0,
-            "canal": resumen.get("canal") or "",
-            "plan_mensual": plan,
+            "cliente": grp["label"],
+            "miembros": grp["miembros"],
+            "encontrado": not no_encontrados,
+            "no_encontrados": no_encontrados,
+            "mtod": g_mtod,
+            "mes_anterior_mtd": g_ma,
+            "canal": " + ".join(canales),
+            "plan_mensual": grp["plan"],
         })
 
     force_debug = os.getenv("DEBUG_MCP", "").strip() in ("1", "true", "yes")
@@ -369,6 +538,20 @@ async def generar(request: Request):
         fecha_corte=fecha_corte_d,
         kam_name=kam_name,
     )
+    # Generamos los SVG de evolucion y los inyectamos en cada fila del contexto.
+    # Van como HTML pre-renderizado (no se serializan al cache como SVG gigante
+    # si no hay datos) para que la plantilla solo tenga que hacer `| safe`.
+    for d in context["rows"]:
+        ev = d.get("evolucion") or {}
+        if ev.get("has_data"):
+            # Con un solo canal el grafico por canal es redundante con el total:
+            # mostramos solo el total (mas alto para llenar la lamina).
+            multi = len(ev.get("series", {})) > 1
+            d["chart_total_svg"] = charts.bar_chart_svg(ev["labels"], ev["total"], height=200 if multi else 300)
+            d["chart_canal_svg"] = charts.line_chart_svg(ev["labels"], ev["series"]) if multi else ""
+        else:
+            d["chart_total_svg"] = ""
+            d["chart_canal_svg"] = ""
     report_id = _cache_report(context)
     return templates.TemplateResponse(
         "reporte.html",
@@ -400,6 +583,40 @@ def download_report_html(request: Request, report_id: str):
     )
 
 
+async def _generate_pdf_async(html: str) -> bytes:
+    from playwright.async_api import async_playwright
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(html, wait_until="networkidle")
+            return await page.pdf(
+                format="A4",
+                landscape=True,
+                print_background=True,
+                margin={"top": "8mm", "right": "8mm", "bottom": "8mm", "left": "8mm"},
+            )
+        finally:
+            await browser.close()
+
+
+def _render_pdf(html: str) -> bytes:
+    """Genera el PDF en un loop dedicado, pensado para correr en un thread aparte.
+
+    En Windows, uvicorn con reload (o workers>1) fuerza WindowsSelectorEventLoopPolicy
+    a nivel de proceso (ver uvicorn/loops/asyncio.py), y ese loop no puede lanzar
+    subprocesos, por lo que Playwright falla al abrir su driver/Chromium. Acá creamos
+    un ProactorEventLoop dedicado (que sí soporta subprocesos) sin tocar la policy
+    global del proceso, así no interferimos con el loop principal de uvicorn.
+    """
+    loop = asyncio.ProactorEventLoop() if sys.platform == "win32" else asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(_generate_pdf_async(html))
+    finally:
+        loop.close()
+
+
 @app.get("/reporte/{report_id}.pdf")
 async def download_report_pdf(request: Request, report_id: str):
     entry = _REPORT_CACHE.get(report_id)
@@ -408,20 +625,7 @@ async def download_report_pdf(request: Request, report_id: str):
     context = entry["context"]
     html = _render_report_html(request, context, print_mode=True)
 
-    from playwright.async_api import async_playwright
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-        try:
-            page = await browser.new_page()
-            await page.set_content(html, wait_until="networkidle")
-            pdf_bytes = await page.pdf(
-                format="A4",
-                landscape=True,
-                print_background=True,
-                margin={"top": "8mm", "right": "8mm", "bottom": "8mm", "left": "8mm"},
-            )
-        finally:
-            await browser.close()
+    pdf_bytes = await asyncio.to_thread(_render_pdf, html)
 
     fname = f"{_slug_filename('Update Comercial ' + context.get('mes_label', ''))}.pdf"
     return Response(
